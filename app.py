@@ -1,11 +1,20 @@
 import streamlit as st
 import requests
-from datetime import datetime, date
-from functools import lru_cache
+from datetime import datetime, timedelta
+import os
 
-API_KEY = st.secrets["THE_ODDS_API_KEY"]
+st.set_page_config(page_title="The Syndicate's Predictions", layout="wide")
 
-LEAGUES = {
+# Load API key
+API_KEY = os.getenv("THE_ODDS_API_KEY")
+
+# Title
+st.title("The Syndicate's Predictions")
+selected_date = st.date_input("Select a date", datetime.today())
+st.markdown("#### Upcoming Fixtures with Predictions")
+
+# League IDs (examples)
+leagues = {
     "Premier League": "soccer_epl",
     "La Liga": "soccer_spain_la_liga",
     "Serie A": "soccer_italy_serie_a",
@@ -20,75 +29,70 @@ LEAGUES = {
     "Conference League": "soccer_uefa_conference_league"
 }
 
-st.set_page_config(page_title="The Syndicate’s Predictions", layout="wide")
-st.title("🔮 The Syndicate’s Predictions")
+def implied_prob(decimal_odds):
+    return round(100 / decimal_odds, 2) if decimal_odds else 0
 
-selected_date = st.sidebar.date_input("Pick a date", value=date.today())
-st.sidebar.markdown("---")
+def classify_probability(prob):
+    if prob > 75:
+        return "Highly Likely"
+    elif prob > 60:
+        return "Likely"
+    elif prob > 45:
+        return "Possible"
+    else:
+        return "Unlikely"
 
-def convert_odds(o): return round(100/o, 1) if o else 0
-def classify(p):
-    return "Very Likely" if p > 75 else "Likely" if p > 60 else "Edge" if p > 45 else "Unlikely"
-def stars(p):
-    return "⭐⭐⭐⭐⭐" if p > 75 else "⭐⭐⭐⭐" if p > 60 else "⭐⭐⭐" if p > 45 else "⭐⭐" if p > 30 else "⭐"
+def get_confidence_rating(prob):
+    if prob > 75:
+        return "⭐⭐⭐⭐⭐"
+    elif prob > 60:
+        return "⭐⭐⭐⭐"
+    elif prob > 45:
+        return "⭐⭐⭐"
+    elif prob > 30:
+        return "⭐⭐"
+    else:
+        return "⭐"
 
-@lru_cache()
-def load_matches():
-    results = []
-    for league_name, sport in LEAGUES.items():
-        r = requests.get(
-            f"https://api.the-odds-api.com/v4/sports/{sport}/odds",
-            params={"apiKey": API_KEY, "regions": "eu", "markets": "h2h,totals", "oddsFormat": "decimal", "dateFormat": "iso"}
-        )
-        if r.status_code != 200:
-            continue
-        for ev in r.json():
-            dt = datetime.fromisoformat(ev["commence_time"].replace("Z", "+00:00"))
-            if dt.date() < selected_date:
-                continue
-            outcomes = next(m for m in ev["bookmakers"][0]["markets"] if m["key"]=="h2h")["outcomes"]
-            home = outcomes[0]["name"]; away = outcomes[1]["name"]
-            home_od = outcomes[0]["price"]; away_od = outcomes[1]["price"]
-            home_p = convert_odds(home_od); away_p = convert_odds(away_od)
-            pred = home if home_p > away_p else away
-            conf = int((max(home_p, away_p)/100)*5)
-            over = next((m for m in ev["bookmakers"][0]["markets"] if m["key"]=="totals"), None)
-            ou = "Over 2.5" if over else "N/A"
-            results.append({
+def fetch_data(league_id):
+    url = f"https://api.the-odds-api.com/v4/sports/{league_id}/odds/?regions=eu&markets=h2h,totals,spreads&oddsFormat=decimal&apiKey={API_KEY}"
+    res = requests.get(url)
+    if res.status_code != 200:
+        return []
+    return res.json()
+
+# Loop through leagues
+all_predictions = []
+for league_name, league_id in leagues.items():
+    matches = fetch_data(league_id)
+    for match in matches:
+        commence = datetime.fromisoformat(match["commence_time"].replace("Z", "+00:00"))
+        if commence.date() >= selected_date:
+            match_block = {
                 "league": league_name,
-                "time": dt.strftime("%Y-%m-%d %H:%M"),
-                "home": home,
-                "away": away,
-                "home_p": home_p,
-                "away_p": away_p,
-                "pred": pred,
-                "class": classify(max(home_p, away_p)),
-                "stars": stars(max(home_p, away_p)),
-                "conf": conf,
-                "ou": ou
-            })
-    return sorted(results, key=lambda x: x["time"])
+                "time": commence.strftime('%Y-%m-%d %H:%M'),
+                "teams": match["teams"],
+                "bookmakers": match.get("bookmakers", [])
+            }
+            all_predictions.append(match_block)
 
-matches = load_matches()
-
-tab1, tab2 = st.tabs(["📊 All Predictions", "🔥 Strong Picks"])
-
-with tab1:
-    if not matches:
-        st.warning("No upcoming matches found from selected date.")
-    for m in matches:
-        st.write(f"**{m['time']} – {m['league']}**")
-        st.write(f"{m['home']} vs {m['away']}")
-        st.write(f"Probabilities: {m['home_p']}% vs {m['away_p']}%")
-        st.write(f"Prediction: {m['pred']} — {m['class']} {m['stars']}")
-        st.write(f"Over/Under: {m['ou']}")
-        st.divider()
-
-with tab2:
-    strong = [m for m in matches if m["conf"] >= 4]
-    if not strong:
-        st.info("No strong picks yet.")
-    for m in strong:
-        st.write(f"🔥 {m['time']} – {m['league']} — {m['home']} vs {m['away']}")
-        st.write(f"Pick: **{m['pred']}** with {m['stars']} confidence")
-        st.write("---")
+# Display matches
+if all_predictions:
+    for m in all_predictions:
+        st.markdown(f"### {m['teams'][0]} vs {m['teams'][1]}")
+        st.caption(f"{m['league']} | {m['time']}")
+        if m["bookmakers"]:
+            for bookmaker in m["bookmakers"]:
+                for market in bookmaker.get("markets", []):
+                    if market["key"] == "h2h":
+                        st.subheader("🔮 Win Probabilities")
+                        for outcome in market["outcomes"]:
+                            prob = implied_prob(outcome['price'])
+                            st.write(f"**{outcome['name']}**: {prob}% chance — {classify_probability(prob)} | Confidence: {get_confidence_rating(prob)}")
+                    elif market["key"] == "totals":
+                        st.subheader("📊 Over/Under Goals")
+                        for o in market["outcomes"]:
+                            st.write(f"{o['name']} {o['point']} Goals @ {o['price']} odds")
+        st.markdown("---")
+else:
+    st.info("No matches found for the selected date or leagues.")
