@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from datetime import datetime, timedelta
+from math import ceil
 
 # --- CONFIG ---
 API_KEY = st.secrets.get("API_FOOTBALL_KEY", None)
@@ -159,49 +160,6 @@ def estimate_corners(probs):
     corners = 5 + round(over_prob / 25)
     return max(5, min(12, corners))
 
-def fetch_fixture_statistics(fixture_id):
-    url = f"{BASE_URL}/fixtures/statistics"
-    params = {"fixture": fixture_id}
-    res = requests.get(url, headers=HEADERS, params=params)
-    if res.status_code == 200:
-        data = res.json()
-        return data.get("response", [])
-    return []
-
-def extract_yellow_cards(stats_response):
-    if not stats_response or len(stats_response) < 2:
-        return None
-    try:
-        home_stats = stats_response[0]["statistics"]
-        away_stats = stats_response[1]["statistics"]
-
-        home_yellow = next(
-            (int(stat["value"]) for stat in home_stats if stat["type"] == "Yellow Cards"), 0
-        )
-        away_yellow = next(
-            (int(stat["value"]) for stat in away_stats if stat["type"] == "Yellow Cards"), 0
-        )
-        return home_yellow + away_yellow
-    except Exception:
-        return None
-
-def extract_corners(stats_response):
-    if not stats_response or len(stats_response) < 2:
-        return None
-    try:
-        home_stats = stats_response[0]["statistics"]
-        away_stats = stats_response[1]["statistics"]
-
-        home_corners = next(
-            (int(stat["value"]) for stat in home_stats if stat["type"] == "Corner Kicks"), 0
-        )
-        away_corners = next(
-            (int(stat["value"]) for stat in away_stats if stat["type"] == "Corner Kicks"), 0
-        )
-        return home_corners + away_corners
-    except Exception:
-        return None
-
 def main():
     st.set_page_config(
         page_title="THE SYNDICATE - Soccer Predictor", layout="wide", initial_sidebar_state="expanded"
@@ -251,91 +209,40 @@ def main():
         st.info("No fixtures found for the selected date and leagues.")
         st.stop()
 
-    matches_data = []
-
     for f in fixtures:
         status = f["fixture"]["status"]["short"]
-        if status != "NS":  # Only upcoming matches, not live or finished
+        if status != "NS":
             continue
+
+        home = f["teams"]["home"]["name"]
+        away = f["teams"]["away"]["name"]
+        date_utc = f["fixture"]["date"]
+        date_local = safe_parse_datetime(date_utc)
+        league_name = f['league']['name']
+        badge_url = LEAGUE_BADGES.get(league_name, "")
 
         odds_response = get_odds_for_fixture(f["fixture"]["id"])
         probs = calc_probabilities(odds_response)
-        conf_stars = confidence_stars(probs)
-        conf_score = len(conf_stars) if conf_stars != "No data" else 0
-
-        stats_response = fetch_fixture_statistics(f["fixture"]["id"])
-        yellow_cards = extract_yellow_cards(stats_response)
-        if yellow_cards is None:
-            yellow_cards = estimate_yellow_cards(probs)
-
-        corners = extract_corners(stats_response)
-        if corners is None:
-            corners = estimate_corners(probs)
+        conf = confidence_stars(probs)
+        over, under = over_under_goals_placeholder()
+        yellow_cards = estimate_yellow_cards(probs)
+        corners = estimate_corners(probs)
 
         home_odd, draw_odd, away_odd = get_match_winner_odds(odds_response)
 
-        match_info = {
-            "fixture": f,
-            "probs": probs,
-            "conf_stars": conf_stars,
-            "conf_score": conf_score,
-            "yellow_cards": yellow_cards,
-            "corners": corners,
-            "home_odd": home_odd,
-            "draw_odd": draw_odd,
-            "away_odd": away_odd,
-        }
-        matches_data.append(match_info)
-
-    tab = st.sidebar.radio("View mode", ["All Matches", "Strong Picks"])
-
-    if tab == "Strong Picks":
-        strong_matches = [m for m in matches_data if m["conf_score"] >= 4]
-
-        if not strong_matches:
-            st.info("No strong picks available for the selected criteria.")
-        else:
-            st.markdown(f"### Strong Picks ({len(strong_matches)} matches)")
-            for m in strong_matches:
-                f = m["fixture"]
-                league_name = f['league']['name']
-                badge_url = LEAGUE_BADGES.get(league_name, "")
-                home = f["teams"]["home"]["name"]
-                away = f["teams"]["away"]["name"]
-                date_local = safe_parse_datetime(f["fixture"]["date"])
-                conf = m["conf_stars"]
-                probs = m["probs"]
-
-                best_outcome = max(probs, key=probs.get) if probs else "N/A"
-                best_prob = probs[best_outcome] if probs else "N/A"
-
-                st.markdown(
-                    f"""
-                    <div style="background:#23232b; border-radius:15px; padding:15px; margin-bottom:15px; color:#f3f4f6; box-shadow: 0 1px 6px #1e293bbb;">
-                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
-                            <img src="{badge_url}" alt="{league_name}" loading="lazy" style="max-height:22px;" />
-                            <strong>{league_name}</strong>
-                            <span style="margin-left:auto; font-family: monospace; color:#818cf8;">{date_local.strftime('%Y-%m-%d %H:%M UTC')}</span>
-                        </div>
-                        <div style="font-weight:bold; font-size:1.1rem; margin-bottom:6px;">
-                            <span style="color:#60a5fa;">{home}</span> vs <span style="color:#facc15;">{away}</span>
-                        </div>
-                        <div>
-                            <strong>Confidence:</strong> <span style="color:#fbbf24; font-size:1.1rem;">{conf}</span> &nbsp;&nbsp;
-                            <strong>Best Pick:</strong> {best_outcome.upper()} ({best_prob}%)
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-    else:
-        for m in matches_data:
-            f = m["fixture"]
-            league_name = f['league']['name']
-            badge_url = LEAGUE_BADGES.get(league_name, "")
-            home = f["teams"]["home"]["name"]
-            away = f["teams"]["away"]["name"]
-            date_local = safe_parse_datetime(f["fixture"]["date"])
-
-            probs
-
+        st.markdown(
+            f"""
+            <div style="background:#23232b; border-radius:18px; padding:20px; margin-bottom:24px; box-shadow: 0 2px 8px #1e293b33; color:#f3f4f6;">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+                    <img src="{badge_url}" alt="{league_name}" loading="lazy" />
+                    <strong style="font-size:1.05rem;">{league_name}</strong>
+                    <span style="margin-left:auto; font-family: monospace; color:#818cf8;">{date_local.strftime('%Y-%m-%d %H:%M UTC')}</span>
+                </div>
+                <div style="display:flex; font-weight:bold; font-size:1.3rem; margin-bottom:10px;">
+                    <span style="flex:1; color:#60a5fa;">{home}</span>
+                    <span style="margin: 0 8px; color:#a1a1aa;">vs</span>
+                    <span style="flex:1; color:#facc15; text-align:right;">{away}</span>
+                </div>
+                <div style="display:grid; grid-template-columns: repeat(3,1fr); gap:12px; margin-bottom:16px; font-size:0.9rem;">
+                    <div style="background:#111827; padding:10px; border-radius:10px;">
+                        <div style="color:#3b82f
