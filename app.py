@@ -27,7 +27,6 @@ LEAGUES = {
     "Conference League": 848,
 }
 
-# League badge URLs mapping
 LEAGUE_BADGES = {
     "Premier League": "https://upload.wikimedia.org/wikipedia/en/f/f2/Premier_League_Logo.svg",
     "La Liga": "https://upload.wikimedia.org/wikipedia/en/1/15/La_Liga_Santander.svg",
@@ -44,7 +43,6 @@ LEAGUE_BADGES = {
 }
 
 def safe_parse_datetime(date_utc):
-    # Fixes issues with API-Football 'Z' ISO datetimes like '2025-08-11T20:00:00Z'
     if date_utc.endswith("Z"):
         date_utc = date_utc[:-1] + "+00:00"
     return datetime.fromisoformat(date_utc)
@@ -76,12 +74,32 @@ def get_odds_for_fixture(fixture_id):
         return data.get("response", [])
     return []
 
+def get_match_winner_odds(odds_response):
+    if not odds_response:
+        return ("N/A", "N/A", "N/A")
+    try:
+        bookmakers = odds_response[0].get("bookmakers", [])
+        for bookmaker in bookmakers:
+            for bet in bookmaker.get("bets", []):
+                if bet.get("name") == "Match Winner":
+                    values = bet.get("values", [])
+                    home = draw = away = "N/A"
+                    for v in values:
+                        if v.get("value") == "Home":
+                            home = v.get("odd", "N/A")
+                        elif v.get("value") == "Draw":
+                            draw = v.get("odd", "N/A")
+                        elif v.get("value") == "Away":
+                            away = v.get("odd", "N/A")
+                    return (home, draw, away)
+    except Exception:
+        return ("N/A", "N/A", "N/A")
+    return ("N/A", "N/A", "N/A")
+
 def calc_probabilities(odds_response):
-    """Calculate normalized probabilities from odds"""
     if not odds_response:
         return None
     try:
-        # Pick first bookmaker with Match Winner market
         for bookmaker in odds_response[0]["bookmakers"]:
             for bet in bookmaker["bets"]:
                 if bet["name"] == "Match Winner":
@@ -105,7 +123,6 @@ def confidence_stars(probabilities):
     if probabilities is None:
         return "No data"
     max_prob = max(probabilities.values())
-    # Scale max_prob (50% to 90%) to 1-5 stars
     stars = int(min(max((max_prob - 50) / 8, 1), 5))
     return "⭐" * stars
 
@@ -125,7 +142,6 @@ def narrative(fixture, probs):
     return explanation
 
 def over_under_goals_placeholder():
-    # Placeholder: random prediction
     import random
     over = random.randint(40, 70)
     under = 100 - over
@@ -187,7 +203,7 @@ def main():
         home = f["teams"]["home"]["name"]
         away = f["teams"]["away"]["name"]
         date_utc = f["fixture"]["date"]
-        date_local = safe_parse_datetime(date_utc)   # <--- FIXED LINE HERE!
+        date_local = safe_parse_datetime(date_utc)
         league_name = f['league']['name']
         badge_url = LEAGUE_BADGES.get(league_name, "")
 
@@ -195,8 +211,10 @@ def main():
         probs = calc_probabilities(odds_response)
         conf = confidence_stars(probs)
         over, under = over_under_goals_placeholder()
-        yellow_cards = 4  # Example static
-        corners = 9      # Example static
+        yellow_cards = 4
+        corners = 9
+
+        home_odd, draw_odd, away_odd = get_match_winner_odds(odds_response)
 
         st.markdown(
             f"""
@@ -214,17 +232,17 @@ def main():
                 <div style="display:grid; grid-template-columns: repeat(3,1fr); gap:12px; margin-bottom:16px; font-size:0.9rem;">
                     <div style="background:#111827; padding:10px; border-radius:10px;">
                         <div style="color:#3b82f6; font-weight:600;">Home Win</div>
-                        <div>Odds: <strong>{odds_response[0]['bookmakers']['bets']['values']['odd'] if odds_response else 'N/A'}</strong></div>
+                        <div>Odds: <strong>{home_odd}</strong></div>
                         <div>Predicted: <strong>{probs['home'] if probs else 'N/A'}%</strong></div>
                     </div>
                     <div style="background:#111827; padding:10px; border-radius:10px;">
                         <div style="color:#f3f4f6; font-weight:600;">Draw</div>
-                        <div>Odds: <strong>{odds_response[0]['bookmakers']['bets']['values'][1]['odd'] if odds_response else 'N/A'}</strong></div>
+                        <div>Odds: <strong>{draw_odd}</strong></div>
                         <div>Predicted: <strong>{probs['draw'] if probs else 'N/A'}%</strong></div>
                     </div>
                     <div style="background:#111827; padding:10px; border-radius:10px;">
                         <div style="color:#facc15; font-weight:600;">Away Win</div>
-                        <div>Odds: <strong>{odds_response[0]['bookmakers']['bets']['values'][2]['odd'] if odds_response else 'N/A'}</strong></div>
+                        <div>Odds: <strong>{away_odd}</strong></div>
                         <div>Predicted: <strong>{probs['away'] if probs else 'N/A'}%</strong></div>
                     </div>
                 </div>
