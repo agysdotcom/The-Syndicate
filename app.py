@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 from datetime import datetime, timedelta
-from math import ceil
 
 # --- CONFIG ---
 API_KEY = st.secrets.get("API_FOOTBALL_KEY", None)
@@ -160,6 +159,49 @@ def estimate_corners(probs):
     corners = 5 + round(over_prob / 25)
     return max(5, min(12, corners))
 
+def fetch_fixture_statistics(fixture_id):
+    url = f"{BASE_URL}/fixtures/statistics"
+    params = {"fixture": fixture_id}
+    res = requests.get(url, headers=HEADERS, params=params)
+    if res.status_code == 200:
+        data = res.json()
+        return data.get("response", [])
+    return []
+
+def extract_yellow_cards(stats_response):
+    if not stats_response or len(stats_response) < 2:
+        return None
+    try:
+        home_stats = stats_response[0]["statistics"]
+        away_stats = stats_response[1]["statistics"]
+
+        home_yellow = next(
+            (int(stat["value"]) for stat in home_stats if stat["type"] == "Yellow Cards"), 0
+        )
+        away_yellow = next(
+            (int(stat["value"]) for stat in away_stats if stat["type"] == "Yellow Cards"), 0
+        )
+        return home_yellow + away_yellow
+    except Exception:
+        return None
+
+def extract_corners(stats_response):
+    if not stats_response or len(stats_response) < 2:
+        return None
+    try:
+        home_stats = stats_response[0]["statistics"]
+        away_stats = stats_response[1]["statistics"]
+
+        home_corners = next(
+            (int(stat["value"]) for stat in home_stats if stat["type"] == "Corner Kicks"), 0
+        )
+        away_corners = next(
+            (int(stat["value"]) for stat in away_stats if stat["type"] == "Corner Kicks"), 0
+        )
+        return home_corners + away_corners
+    except Exception:
+        return None
+
 def main():
     st.set_page_config(
         page_title="THE SYNDICATE - Soccer Predictor", layout="wide", initial_sidebar_state="expanded"
@@ -211,7 +253,7 @@ def main():
 
     for f in fixtures:
         status = f["fixture"]["status"]["short"]
-        if status != "NS":
+        if status != "NS":  # Only upcoming matches, not live or finished
             continue
 
         home = f["teams"]["home"]["name"]
@@ -225,8 +267,15 @@ def main():
         probs = calc_probabilities(odds_response)
         conf = confidence_stars(probs)
         over, under = over_under_goals_placeholder()
-        yellow_cards = estimate_yellow_cards(probs)
-        corners = estimate_corners(probs)
+
+        stats_response = fetch_fixture_statistics(f["fixture"]["id"])
+        yellow_cards = extract_yellow_cards(stats_response)
+        if yellow_cards is None:
+            yellow_cards = estimate_yellow_cards(probs)
+
+        corners = extract_corners(stats_response)
+        if corners is None:
+            corners = estimate_corners(probs)
 
         home_odd, draw_odd, away_odd = get_match_winner_odds(odds_response)
 
