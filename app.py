@@ -245,4 +245,33 @@ def main():
                 </div>
                 <div style="display:grid; grid-template-columns: repeat(3,1fr); gap:12px; margin-bottom:16px; font-size:0.9rem;">
                     <div style="background:#111827; padding:10px; border-radius:10px;">
-                        <div style="color:#3b82f
+                        <div style="color:#3b82f6; font-weight:600;">Home Win</div>
+                        <div>Odds: <strong>{home_odd}</strong></div>
+                        <div>Predicted: <strong>{probs['home'] if probs else 'N/A'}%</strong></div>
+                    </div>
+                    <div style="background:#111827; padding:10px; border-radius:10px;">
+                        <div style="color:#f3f4f6; font-weight:600;">Draw</div>
+                        <div>Odds: <strong>{draw_odd}</strong></div>
+                        <div>Predicted: <strong>{probs['draw'] if probs else 'N/A'}%</strong></div>
+                    </div>
+                    <div style="background:#111827; padding:10px; border-radius:10px;">
+                        <div style="color:#facc15; font-weight:600;">Away Win</div>
+                        <div>Odds: <strong>{away_odd}</strong></div>
+                        <div>Predicted: <strong>{probs['away'] if probs else 'N/A'}%</strong></div>
+                    </div>
+                </div>
+                <div style="display:flex; gap:24px; flex-wrap:wrap; font-size:0.95rem;">
+                    <div><strong>Confidence:</strong> <span style="color:#fbbf24; font-size:1.25rem;">{conf}</span></div>
+                    <div><strong>Over 2.5 Goals:</strong> <span style="color:#38bdf8;">{over}%</span> | <strong>Under 2.5 Goals:</strong> <span style="color:#f472b6;">{under}%</span></div>
+                    <div><strong>Yellow Cards:</strong> <span style="color:#fde68a;">{yellow_cards}</span> | <strong>Corners:</strong> <span style="color:#60a5fa;">{corners}</span></div>
+                </div>
+                <div style="margin-top:15px; background:#1f2937; border-radius:10px; padding:12px; font-style: italic; color:#cbd5e1;">
+                    {narrative(f, probs)}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+if __name__ == "__main__":
+    main()
