@@ -147,6 +147,19 @@ def over_under_goals_placeholder():
     under = 100 - over
     return over, under
 
+def estimate_yellow_cards(probs):
+    if probs is None:
+        return 3
+    intensity = (probs['home'] + probs['away']) / 2
+    return max(3, min(7, round(intensity / 25 * 7)))
+
+def estimate_corners(probs):
+    if probs is None:
+        return 7
+    over_prob = probs['home'] + probs['away']
+    corners = 5 + round(over_prob / 25)
+    return max(5, min(12, corners))
+
 def main():
     st.set_page_config(
         page_title="THE SYNDICATE - Soccer Predictor", layout="wide", initial_sidebar_state="expanded"
@@ -177,6 +190,7 @@ def main():
     selected_leagues = st.sidebar.multiselect(
         "Select Leagues", league_names, default=league_names[:3]
     )
+
     today = datetime.utcnow().date()
     selected_date = st.sidebar.date_input(
         "Select Match Date", min_value=today, max_value=today + timedelta(days=30), value=today
@@ -211,8 +225,8 @@ def main():
         probs = calc_probabilities(odds_response)
         conf = confidence_stars(probs)
         over, under = over_under_goals_placeholder()
-        yellow_cards = 4
-        corners = 9
+        yellow_cards = estimate_yellow_cards(probs)
+        corners = estimate_corners(probs)
 
         home_odd, draw_odd, away_odd = get_match_winner_odds(odds_response)
 
