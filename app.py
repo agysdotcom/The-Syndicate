@@ -291,24 +291,21 @@ def render_fixture(f):
             st.markdown(f"- {n}")
 
 
-# ---------------- Prepare and show fixtures ----------------
-fixtures_favourites = []  # Placeholder, to implement your logic as needed
-fixtures_live = []        # Placeholder, to implement your logic as needed
+# Prepare placeholders for favourites and live tabs
+fixtures_favourites = []  # Add your implementation if needed
+fixtures_live = []        # Add your implementation if needed
+
 
 def prepare_fixtures_for_date(date_iso: str) -> List[Dict]:
     all_fixtures = []
     for league_name, league_id in LEAGUES.items():
         league_fixtures = fetch_api_football_fixtures(league_id, date_iso)
         for f in league_fixtures:
-            # Fetch odds
             o = fetch_odds(f['home'], f['away'], date_iso)
             h_od, d_od, a_od = extract_match_odds(o)
-            # Fetch news snippets
             news = fetch_news_snippets(f['home']) + fetch_news_snippets(f['away'])
             news_s = sentiment_score(news)
-            # Predict win probs
             ph, pd, pa = predict_win_odds(h_od, d_od, a_od, news_s)
-            # Over/under probs (dummy xG)
             xg_home, xg_away = 1.3 + ph * 1.5, 1.1 + pa * 1.5
             ou = over_under_probs(xg_home, xg_away)
             best_bet = "🏆 Strong Pick" if max(ph, pa) > 0.6 else ""
@@ -329,23 +326,25 @@ def prepare_fixtures_for_date(date_iso: str) -> List[Dict]:
 fixtures_today = prepare_fixtures_for_date(date_today)
 fixtures_tomorrow = prepare_fixtures_for_date(date_tomorrow)
 
+
 with tabs[0]:
     st.info("Favourites tab content goes here.")
     for fx in fixtures_favourites:
         render_fixture(fx)
 
-with tabs[1]:
+with tabs[12]:
     st.info("Live tab content goes here.")
     for fx in fixtures_live:
         render_fixture(fx)
 
-with tabs[4]:
+with tabs[13]:
     for fx in fixtures_today:
         render_fixture(fx)
 
-with tabs[9]:
+with tabs[2]:
     for fx in fixtures_tomorrow:
         render_fixture(fx)
+
 
 # ---------------- Bottom Nav ----------------
 st.markdown("""
