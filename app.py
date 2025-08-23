@@ -77,7 +77,7 @@ st.markdown('''<div style="text-align:center; margin-bottom: 1rem;">
 <span style="font-size:1rem; color:#94a3b8;">Football Predictions • 2025–2026</span>
 </div>''', unsafe_allow_html=True)
 
-# -------------- Helpers ----------------
+# ---------------- Helper Functions ----------------
 def safe_parse_datetime_utc_to_johannesburg(date_utc: str) -> datetime:
     try:
         if date_utc.endswith("Z"):
@@ -87,6 +87,12 @@ def safe_parse_datetime_utc_to_johannesburg(date_utc: str) -> datetime:
         return dt_jhb
     except Exception:
         return datetime.now(tz=JOHANNESBURG_TZ)
+
+def sentiment_score(text_list: List[str]) -> float:
+    if not text_list:
+        return 0.0
+    scores = [sia.polarity_scores(t)['compound'] for t in text_list]
+    return np.mean(scores)
 
 def _proportional_devig(prob_list: List[float]) -> List[float]:
     s = sum(prob_list)
@@ -99,7 +105,7 @@ def _odds_to_implied(odds: List[float]) -> List[float]:
     for o in odds:
         try:
             o = float(o)
-            probs.append(1.0/o if o > 1e-9 else 0.0)
+            probs.append(1.0 / o if o > 1e-9 else 0.0)
         except:
             probs.append(0.0)
     return probs
@@ -117,7 +123,7 @@ def make_star_confidence(value: float) -> str:
     stars = int(np.clip(1+round(4*score),1,5))
     return "⭐"*stars
 
-# --------- Fetch data functions ---------
+# ---------------- Fetch Data ----------------
 @st.cache_data(ttl=60*15)
 def fetch_api_football_fixtures(league_id: int, date_iso: str) -> List[Dict]:
     try:
@@ -128,7 +134,7 @@ def fetch_api_football_fixtures(league_id: int, date_iso: str) -> List[Dict]:
             "season": int(date_iso[:4]),
             "date": date_iso,
         }
-        r = requests.get(url,headers=headers,params=params,timeout=15)
+        r = requests.get(url, headers=headers, params=params, timeout=15)
         if not r.ok:
             return []
         data = r.json()
@@ -199,7 +205,7 @@ def extract_match_odds(odds_obj:Dict)->Tuple[Optional[float],Optional[float],Opt
         return None, None, None
 
 @st.cache_data(ttl=60*30)
-def fetch_news_snippets(team:str) -> List[str]:
+def fetch_news_snippets(team:str)->List[str]:
     try:
         params = {
             "q": f"{team} injury press conference latest",
@@ -216,27 +222,27 @@ def fetch_news_snippets(team:str) -> List[str]:
     except:
         return []
 
-# --------- Prediction functions ----------
+# ---------------- Prediction ----------------
 def predict_win_odds(h_odds:Optional[float], d_odds:Optional[float], a_odds:Optional[float], news_score:float=0.0)->Tuple[float,float,float]:
     probs = _odds_to_implied([h_odds, d_odds, a_odds])
     probs = _proportional_devig(probs)
-    probs = [min(max(p+0.05*news_score,0.0),1.0) for p in probs]
+    probs = [min(max(p + 0.05*news_score, 0.0), 1.0) for p in probs]
     s = sum(probs)
     if s==0:
-        return 1/3,1/3,1/3
+        return 1/3, 1/3, 1/3
     probs = [p/s for p in probs]
     return tuple(probs)
 
 def over_under_probs(xg_home:float, xg_away:float)->Dict[str,float]:
-    total = xg_home+xg_away
-    lines = [0.5,1.5,2.5,3.5,4.5]
+    total = xg_home + xg_away
+    lines = [0.5, 1.5, 2.5, 3.5, 4.5]
     res = {}
     for l in lines:
-        res[f"Over {l}"] = poisson_cdf_over(l,total)
+        res[f"Over {l}"] = poisson_cdf_over(l, total)
         res[f"Under {l}"] = 1 - res[f"Over {l}"]
     return res
 
-# -------- UI logic --------
+# -------- UI ---------
 def render_fixture(f):
     with st.expander(f"{f['home']} vs {f['away']} | {f['leagueName']} | {safe_parse_datetime_utc_to_johannesburg(f['utc']).strftime('%H:%M SAST')} | Status: {f['status']}"):
         col1,col2,col3 = st.columns([2,3,2])
@@ -256,7 +262,7 @@ def render_fixture(f):
 def prepare_fixtures_for_date(date_iso:str)->List[Dict]:
     all_fixtures=[]
     for league_name,league_id in LEAGUES.items():
-        league_fixtures=fetch_api_football_fixtures(league_id,date_iso)
+        league_fixtures=fetch_api_football_fixtures(league_id, date_iso)
         for f in league_fixtures:
             o=fetch_odds(f['home'],f['away'],date_iso)
             h_od,d_od,a_od=extract_match_odds(o)
@@ -268,10 +274,10 @@ def prepare_fixtures_for_date(date_iso:str)->List[Dict]:
             best_bet="🏆 Strong Pick" if max(ph,pa)>0.6 else ""
             confidence=make_star_confidence(max(ph,pa))
             all_fixtures.append({
-                **f, "home_prob": ph, "draw_prob": pd, "away_prob": pa,
-                "news": news, "over_under": ou,
-                "best_bet": best_bet,
-                "confidence": confidence,
+                **f,"home_prob":ph,"draw_prob":pd,"away_prob":pa,
+                "news":news,"over_under":ou,
+                "best_bet":best_bet,
+                "confidence":confidence,
             })
     return all_fixtures
 
@@ -317,18 +323,18 @@ tabs=st.tabs(["Favourites","Live","Today","Tomorrow","Betslips"])
 with tabs[0]:
     st.info("Favourites tab content goes here.")
 
-with tabs[9]:
+with tabs[8]:
     st.info("Live tab content goes here.")
 
-with tabs[10]:
+with tabs[9]:
     for fx in fixtures_today:
         render_fixture(fx)
 
-with tabs[11]:
+with tabs[10]:
     for fx in fixtures_tomorrow:
         render_fixture(fx)
 
-with tabs[12]:
+with tabs[11]:
     st.header("Today's Generated Betslips")
     for slip_name, picks in betslips.items():
         st.subheader(slip_name)
