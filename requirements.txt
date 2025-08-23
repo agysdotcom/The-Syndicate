@@ -1,2 +1,5 @@
 streamlit
 requests
+numpy
+pandas
+nltk
