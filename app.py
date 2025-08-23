@@ -9,26 +9,32 @@ import requests
 import streamlit as st
 import nltk
 
+
 # NLP setup for SentimentIntensityAnalyzer
 try:
     nltk.data.find("sentiment/vader_lexicon.zip")
 except LookupError:
     nltk.download("vader_lexicon")
 
+
 from nltk.sentiment import SentimentIntensityAnalyzer
+
 
 sia = SentimentIntensityAnalyzer()
 
+
 # ---------------- Config ----------------
 st.set_page_config(page_title="THE SYNDICATE - Soccer Predictor", layout="wide")
+
 
 API_FOOTBALL_KEY = "a6917f6db6a731e8b6cfa9f9f365a5ed"
 THEODDSAPI_KEY = "69bb2856e8ec4ad7b9a12f305147b408"
 NEWSAPI_KEY = "c7d0efc525bf48199ab229f8f70fbc01"
 
+
 BASE_FOOTBALL = "https://v3.football.api-sports.io"
-BASE_OPENLIGA = "https://api.openligadb.de"
 BASE_ODDS = "https://api.the-odds-api.com/v4"
+
 
 LEAGUES = {
     "Premier League": 39,
@@ -45,7 +51,9 @@ LEAGUES = {
     "Conference League": 848,
 }
 
+
 HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
+
 
 # ---------------- Style ----------------
 st.markdown(
@@ -72,6 +80,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 st.markdown(
     """
     <div style="text-align:center; margin-bottom: 0.8rem;">
@@ -81,6 +90,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 
 # ---------------- Helpers ----------------
 def safe_parse_datetime(date_utc: str) -> datetime:
@@ -125,29 +135,40 @@ def make_star_confidence(value: float) -> str:
     stars = int(np.clip(1 + round(4*score), 1, 5))
     return "⭐"*stars
 
+
 # ---------------- Fetch Data ----------------
+
 @st.cache_data(ttl=60*15)
-def fetch_openligadb_fixtures(date_iso: str) -> List[Dict]:
+def fetch_api_football_fixtures(league_id: int, date_iso: str) -> List[Dict]:
     try:
-        r = requests.get(f"{BASE_OPENLIGA}/getmatchdata/{date_iso}", timeout=15)
-        data = r.json() if r.ok else []
+        url = f"{BASE_FOOTBALL}/fixtures"
+        headers = {"x-apisports-key": API_FOOTBALL_KEY}
+        params = {
+            "league": league_id,
+            "season": int(date_iso[:4]),
+            "date": date_iso,
+        }
+        r = requests.get(url, headers=headers, params=params, timeout=15)
+        if not r.ok:
+            return []
+        data = r.json()
+        fixtures_raw = data.get("response", [])
         fixtures = []
-        for m in data:
-            try:
-                utc_kick = m.get("MatchDateTimeUTC") or m.get("MatchDateTime")
-                utc_kick = utc_kick.replace(" ","T")+"Z" if " " in utc_kick else utc_kick
-                fixtures.append({
-                    "leagueName": m.get("LeagueName","Unknown"),
-                    "home": m["Team1"]["TeamName"],
-                    "away": m["Team2"]["TeamName"],
-                    "utc": utc_kick,
-                    "status": "NS" if not m.get("MatchIsFinished") else "FT",
-                })
-            except:
-                continue
+        for f in fixtures_raw:
+            fixture = f["fixture"]
+            teams = f["teams"]
+            fixtures.append({
+                "leagueName": f["league"]["name"],
+                "home": teams["home"]["name"],
+                "away": teams["away"]["name"],
+                "utc": fixture["date"],
+                "status": fixture["status"]["short"],
+            })
         return fixtures
-    except:
+    except Exception as e:
+        print("Error fetching API-Football fixtures:", e)
         return []
+
 
 @st.cache_data(ttl=60*30)
 def fetch_odds(home: str, away: str, date_iso: str) -> Dict:
@@ -184,6 +205,7 @@ def fetch_odds(home: str, away: str, date_iso: str) -> Dict:
     except:
         return {}
 
+
 def extract_match_odds(odds_obj: Dict) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     try:
         sites = odds_obj.get("bookmakers", [])
@@ -198,6 +220,7 @@ def extract_match_odds(odds_obj: Dict) -> Tuple[Optional[float], Optional[float]
         return home, draw, away
     except:
         return None, None, None
+
 
 @st.cache_data(ttl=60*30)
 def fetch_news_snippets(team: str) -> List[str]:
@@ -217,11 +240,13 @@ def fetch_news_snippets(team: str) -> List[str]:
     except:
         return []
 
+
 def sentiment_score(text_list: List[str]) -> float:
     if not text_list:
         return 0.0
     scores = [sia.polarity_scores(t)['compound'] for t in text_list]
     return np.mean(scores)
+
 
 # ---------------- Prediction ----------------
 def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: Optional[float], news_score: float=0.0) -> Tuple[float, float, float]:
@@ -232,6 +257,7 @@ def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: O
     probs = [p / s for p in probs]
     return tuple(probs)
 
+
 def over_under_probs(xg_home: float, xg_away: float) -> Dict[str, float]:
     total_xg = xg_home + xg_away
     lines = [0.5, 1.5, 2.5, 3.5, 4.5]
@@ -241,11 +267,14 @@ def over_under_probs(xg_home: float, xg_away: float) -> Dict[str, float]:
         res[f"Under {l}"] = 1 - res[f"Over {l}"]
     return res
 
+
 # ---------------- UI ----------------
 tab1, tab2, tab3, tab4 = st.tabs(["Favourites", "Live", "Today", "Tomorrow"])
 
+
 date_today = datetime.utcnow().strftime("%Y-%m-%d")
 date_tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
+
 
 def render_fixtures(fixtures: List[Dict], date_iso: str):
     if not fixtures:
@@ -273,19 +302,31 @@ def render_fixtures(fixtures: List[Dict], date_iso: str):
         st.markdown(f'<div class="odds-box">{ou_table}</div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
+
 with tab1:
     st.info("Favourites tab content goes here.")
+
 
 with tab2:
     st.info("Live tab content goes here.")
 
+
 with tab3:
-    fixtures = fetch_openligadb_fixtures(date_today)
-    render_fixtures(fixtures, date_today)
+    # Aggregate fixtures from all leagues for today
+    all_fixtures = []
+    for league_name, league_id in LEAGUES.items():
+        fixtures = fetch_api_football_fixtures(league_id, date_today)
+        all_fixtures.extend(fixtures)
+    render_fixtures(all_fixtures, date_today)
+
 
 with tab4:
-    fixtures = fetch_openligadb_fixtures(date_tomorrow)
-    render_fixtures(fixtures, date_tomorrow)
+    # Aggregate fixtures from all leagues for tomorrow
+    all_fixtures = []
+    for league_name, league_id in LEAGUES.items():
+        fixtures = fetch_api_football_fixtures(league_id, date_tomorrow)
+        all_fixtures.extend(fixtures)
+    render_fixtures(all_fixtures, date_tomorrow)
 
 
 # ---------------- Bottom Nav ----------------
