@@ -292,9 +292,8 @@ def render_fixture(f):
 
 
 # Prepare placeholders for favourites and live tabs
-fixtures_favourites = []  # Add your implementation if needed
-fixtures_live = []        # Add your implementation if needed
-
+fixtures_favourites = []  # To be implemented
+fixtures_live = []        # To be implemented
 
 def prepare_fixtures_for_date(date_iso: str) -> List[Dict]:
     all_fixtures = []
@@ -326,22 +325,21 @@ def prepare_fixtures_for_date(date_iso: str) -> List[Dict]:
 fixtures_today = prepare_fixtures_for_date(date_today)
 fixtures_tomorrow = prepare_fixtures_for_date(date_tomorrow)
 
-
 with tabs[0]:
     st.info("Favourites tab content goes here.")
     for fx in fixtures_favourites:
         render_fixture(fx)
 
-with tabs[12]:
+with tabs[9]:
     st.info("Live tab content goes here.")
     for fx in fixtures_live:
         render_fixture(fx)
 
-with tabs[13]:
+with tabs[10]:
     for fx in fixtures_today:
         render_fixture(fx)
 
-with tabs[2]:
+with tabs[11]:
     for fx in fixtures_tomorrow:
         render_fixture(fx)
 
