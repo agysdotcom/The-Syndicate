@@ -1,13 +1,14 @@
 import os
 import math
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
 import nltk
+import pytz
 
 
 # NLP setup for SentimentIntensityAnalyzer
@@ -54,6 +55,8 @@ LEAGUES = {
 
 HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
 
+# Johannesburg timezone
+JOHANNESBURG_TZ = pytz.timezone("Africa/Johannesburg")
 
 # ---------------- Style ----------------
 st.markdown("""
@@ -77,7 +80,6 @@ body {background:#0b0d12;}
 </style>
 """, unsafe_allow_html=True)
 
-
 # ---------------- Header ----------------
 st.markdown('<div style="text-align:center; margin-bottom: 1rem;">'
             '<span style="font-size:2.2rem; font-weight:800; color:#60a5fa;">⚡ THE SYNDICATE</span><br>'
@@ -86,13 +88,16 @@ st.markdown('<div style="text-align:center; margin-bottom: 1rem;">'
 
 
 # ---------------- Helpers ----------------
-def safe_parse_datetime(date_utc: str) -> datetime:
+def safe_parse_datetime_utc_to_johannesburg(date_utc: str) -> datetime:
     try:
+        # Remove trailing Z, parse as UTC
         if date_utc.endswith("Z"):
-            date_utc = date_utc[:-1] + "+00:00"
-        return datetime.fromisoformat(date_utc)
+            date_utc = date_utc[:-1]
+        dt_utc = datetime.fromisoformat(date_utc).replace(tzinfo=timezone.utc)
+        dt_johannesburg = dt_utc.astimezone(JOHANNESBURG_TZ)
+        return dt_johannesburg
     except Exception:
-        return datetime.utcnow()
+        return datetime.now(tz=JOHANNESBURG_TZ)
 
 
 def _proportional_devig(prob_list: List[float]) -> List[float]:
@@ -271,7 +276,7 @@ date_tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def render_fixture(f):
-    with st.expander(f"{f['home']} vs {f['away']} | {f['leagueName']} | {safe_parse_datetime(f['utc']).strftime('%H:%M UTC')} | Status: {f['status']}"):
+    with st.expander(f"{f['home']} vs {f['away']} | {f['leagueName']} | {safe_parse_datetime_utc_to_johannesburg(f['utc']).strftime('%H:%M SAST')} | Status: {f['status']}"):
         col1, col2, col3 = st.columns([2,3,2])
         col1.markdown(f"**Teams:** {f['home']} vs {f['away']}")
         col2.markdown(f"**Win Probabilities:** Home: {f['home_prob']:.0%} | Draw: {f['draw_prob']:.0%} | Away: {f['away_prob']:.0%}")
@@ -287,8 +292,7 @@ def render_fixture(f):
             st.markdown(f"- {n}")
 
 
-# ---------------- Render Tabs ----------------
-# Prepare fixtures lists for each tab
+# ---------------- Prepare and show fixtures ----------------
 fixtures_favourites = []  # Placeholder, your logic here
 fixtures_live = []        # Placeholder, your logic here
 
@@ -327,22 +331,21 @@ fixtures_today = prepare_fixtures_for_date(date_today)
 fixtures_tomorrow = prepare_fixtures_for_date(date_tomorrow)
 
 
-# Display tab content
 with tabs[0]:
     st.info("Favourites tab content goes here.")
     for fx in fixtures_favourites:
         render_fixture(fx)
 
-with tabs[10]:
+with tabs[11]:
     st.info("Live tab content goes here.")
     for fx in fixtures_live:
         render_fixture(fx)
 
-with tabs[11]:
+with tabs[12]:
     for fx in fixtures_today:
         render_fixture(fx)
 
-with tabs[12]:
+with tabs[13]:
     for fx in fixtures_tomorrow:
         render_fixture(fx)
 
