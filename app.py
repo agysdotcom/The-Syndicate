@@ -56,40 +56,33 @@ HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
 
 
 # ---------------- Style ----------------
-st.markdown(
-    """
-    <style>
-    body {background:#0b0d12;}
-    .stApp {background:#0b0d12; color:#e5e7eb;}
-    .card {background:#121420; border:1px solid #1e2233; border-radius:18px; padding:18px; margin-bottom:18px;}
-    .odds-box {background:#0e111a; border:1px solid #20263b; border-radius:12px; padding:10px; margin:5px 0;}
-    .chip { padding:3px 10px; border-radius:999px; font-size:0.75rem; }
-    .chip.live { background:#172a1f; color:#22c55e; border:1px solid #134e4a; }
-    .chip.value { background:#19242d; color:#22d3ee; border:1px solid #164e63; }
-    .bar { height:10px; background:#0f172a; border-radius:999px; overflow:hidden; margin-top:5px;}
-    .bar > div { height:100%; background:linear-gradient(90deg,#22d3ee,#60a5fa); }
-    .neon-green { color:#22c55e; }
-    .neon-red { color:#f87171; }
-    .neon-amber { color:#fbbf24; }
-    .neon-blue { color:#60a5fa; }
-    .bottom-nav {position:fixed; left:0; right:0; bottom:0; background:#0c0f16; border-top:1px solid #1f2940; display:flex; gap:14px; justify-content:space-around; padding:10px 10px; z-index:999;}
-    .bottom-nav a { color:#cbd5e1; text-decoration:none; font-size:0.9rem; }
-    .bottom-nav a strong { display:block; font-size:0.75rem; color:#93c5fd; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<style>
+body {background:#0b0d12;}
+.stApp {background:#0b0d12; color:#e5e7eb;}
+.card {background:#121420; border:1px solid #1e2233; border-radius:18px; padding:18px; margin-bottom:18px;}
+.odds-box {background:#0e111a; border:1px solid #20263b; border-radius:12px; padding:10px; margin:5px 0;}
+.chip { padding:3px 10px; border-radius:999px; font-size:0.75rem; }
+.chip.live { background:#172a1f; color:#22c55e; border:1px solid #134e4a; }
+.chip.value { background:#19242d; color:#22d3ee; border:1px solid #164e63; }
+.bar { height:10px; background:#0f172a; border-radius:999px; overflow:hidden; margin-top:5px;}
+.bar > div { height:100%; background:linear-gradient(90deg,#22d3ee,#60a5fa); }
+.neon-green { color:#22c55e; font-weight:bold;}
+.neon-red { color:#f87171; font-weight:bold;}
+.neon-amber { color:#fbbf24; font-weight:bold;}
+.neon-blue { color:#60a5fa; font-weight:bold;}
+.bottom-nav {position:fixed; left:0; right:0; bottom:0; background:#0c0f16; border-top:1px solid #1f2940; display:flex; gap:14px; justify-content:space-around; padding:10px 10px; z-index:999;}
+.bottom-nav a { color:#cbd5e1; text-decoration:none; font-size:0.9rem; }
+.bottom-nav a strong { display:block; font-size:0.75rem; color:#93c5fd; }
+</style>
+""", unsafe_allow_html=True)
 
 
-st.markdown(
-    """
-    <div style="text-align:center; margin-bottom: 0.8rem;">
-    <span style="font-size:2.2rem; font-weight:800; color:#60a5fa;">⚡ THE SYNDICATE</span><br>
-    <span style="font-size:1rem; color:#94a3b8;">Football Predictions • 2025–2026</span>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# ---------------- Header ----------------
+st.markdown('<div style="text-align:center; margin-bottom: 1rem;">'
+            '<span style="font-size:2.2rem; font-weight:800; color:#60a5fa;">⚡ THE SYNDICATE</span><br>'
+            '<span style="font-size:1rem; color:#94a3b8;">Football Predictions • 2025–2026</span>'
+            '</div>', unsafe_allow_html=True)
 
 
 # ---------------- Helpers ----------------
@@ -254,7 +247,7 @@ def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: O
     probs = _proportional_devig(probs)
     probs = [min(max(p + 0.05 * news_score, 0.0), 1.0) for p in probs]
     s = sum(probs)
-    if s == 0:  # avoid division by zero
+    if s == 0:
         return 1/3, 1/3, 1/3
     probs = [p / s for p in probs]
     return tuple(probs)
@@ -271,75 +264,96 @@ def over_under_probs(xg_home: float, xg_away: float) -> Dict[str, float]:
 
 
 # ---------------- UI ----------------
-tab1, tab2, tab3, tab4 = st.tabs(["Favourites", "Live", "Today", "Tomorrow"])
-
+tabs = st.tabs(["Favourites","Live","Today","Tomorrow"])
 
 date_today = datetime.utcnow().strftime("%Y-%m-%d")
 date_tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
 
 
-def render_fixtures(fixtures: List[Dict], date_iso: str):
-    if not fixtures:
-        st.warning("No fixtures found.")
-        return
-    for f in fixtures:
-        home, away = f["home"], f["away"]
-        utc = f["utc"]
-        status = f["status"]
-        o = fetch_odds(home, away, date_iso)
-        h_od, d_od, a_od = extract_match_odds(o)
-        news = fetch_news_snippets(home) + fetch_news_snippets(away)
-        news_s = sentiment_score(news)
-        ph, pd, pa = predict_win_odds(h_od, d_od, a_od, news_s)
-        xg_home, xg_away = 1.3 + ph * 1.5, 1.1 + pa * 1.5
-        ou = over_under_probs(xg_home, xg_away)
-        best_bet = "🏆 Strong Pick" if max(ph, pa) > 0.6 else ""
-        conf = make_star_confidence(max(ph, pa))
-        st.markdown(f'<div class="card">', unsafe_allow_html=True)
-        st.markdown(f'**{f["leagueName"]}** | {safe_parse_datetime(utc).strftime("%H:%M UTC")} | Status: {status}')
-        st.markdown(f'**{home}** vs **{away}** {f"<span class=\'chip value\'>{best_bet}</span>" if best_bet else ""}', unsafe_allow_html=True)
-        st.markdown(f'<div class="odds-box">Home: {ph:.2%} | Draw: {pd:.2%} | Away: {pa:.2%}</div>', unsafe_allow_html=True)
-        st.markdown(f'Confidence: {conf} | News sentiment: {news_s:.2f}')
-        ou_table = "<br>".join([f"{k}: {v:.2%}" for k, v in ou.items()])
-        st.markdown(f'<div class="odds-box">{ou_table}</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+def render_fixture(f):
+    with st.expander(f"{f['home']} vs {f['away']} | {f['leagueName']} | {safe_parse_datetime(f['utc']).strftime('%H:%M UTC')} | Status: {f['status']}"):
+        col1, col2, col3 = st.columns([2,3,2])
+        col1.markdown(f"**Teams:** {f['home']} vs {f['away']}")
+        col2.markdown(f"**Win Probabilities:** Home: {f['home_prob']:.0%} | Draw: {f['draw_prob']:.0%} | Away: {f['away_prob']:.0%}")
+        col2.progress(f['home_prob'])
+        col3.markdown(f"**Confidence:** {f['confidence']}")
+        if f['best_bet']:
+            col3.markdown(f"<span style='background:#22d3ee;color:#0b0d12;padding:4px 8px;border-radius:10px;'>{f['best_bet']}</span>",unsafe_allow_html=True)
+        st.markdown("**Over/Under Probabilities**")
+        ou_table = pd.DataFrame(list(f['over_under'].items()),columns=["Market","Probability"])
+        st.table(ou_table.style.format({"Probability":"{:.0%}"}))
+        st.markdown("**Recent News:**")
+        for n in f['news']:
+            st.markdown(f"- {n}")
 
 
-with tab1:
+# ---------------- Render Tabs ----------------
+# Prepare fixtures lists for each tab
+fixtures_favourites = []  # Placeholder, your logic here
+fixtures_live = []        # Placeholder, your logic here
+
+def prepare_fixtures_for_date(date_iso: str) -> List[Dict]:
+    all_fixtures = []
+    for league_name, league_id in LEAGUES.items():
+        league_fixtures = fetch_api_football_fixtures(league_id, date_iso)
+        for f in league_fixtures:
+            # Fetch odds
+            o = fetch_odds(f['home'], f['away'], date_iso)
+            h_od, d_od, a_od = extract_match_odds(o)
+            # Fetch news snippets
+            news = fetch_news_snippets(f['home']) + fetch_news_snippets(f['away'])
+            news_s = sentiment_score(news)
+            # Predict win probs
+            ph, pd, pa = predict_win_odds(h_od, d_od, a_od, news_s)
+            # Over/under probs (dummy xG)
+            xg_home, xg_away = 1.3 + ph * 1.5, 1.1 + pa * 1.5
+            ou = over_under_probs(xg_home, xg_away)
+            best_bet = "🏆 Strong Pick" if max(ph, pa) > 0.6 else ""
+            confidence = make_star_confidence(max(ph, pa))
+            all_fixtures.append({
+                **f,
+                "home_prob": ph,
+                "draw_prob": pd,
+                "away_prob": pa,
+                "news": news,
+                "over_under": ou,
+                "best_bet": best_bet,
+                "confidence": confidence,
+            })
+    return all_fixtures
+
+
+fixtures_today = prepare_fixtures_for_date(date_today)
+fixtures_tomorrow = prepare_fixtures_for_date(date_tomorrow)
+
+
+# Display tab content
+with tabs[0]:
     st.info("Favourites tab content goes here.")
+    for fx in fixtures_favourites:
+        render_fixture(fx)
 
-
-with tab2:
+with tabs[10]:
     st.info("Live tab content goes here.")
+    for fx in fixtures_live:
+        render_fixture(fx)
 
+with tabs[11]:
+    for fx in fixtures_today:
+        render_fixture(fx)
 
-with tab3:
-    all_fixtures = []
-    for league_name, league_id in LEAGUES.items():
-        fixtures = fetch_api_football_fixtures(league_id, date_today)
-        all_fixtures.extend(fixtures)
-    render_fixtures(all_fixtures, date_today)
-
-
-with tab4:
-    all_fixtures = []
-    for league_name, league_id in LEAGUES.items():
-        fixtures = fetch_api_football_fixtures(league_id, date_tomorrow)
-        all_fixtures.extend(fixtures)
-    render_fixtures(all_fixtures, date_tomorrow)
+with tabs[12]:
+    for fx in fixtures_tomorrow:
+        render_fixture(fx)
 
 
 # ---------------- Bottom Nav ----------------
-st.markdown(
-    """
-    <div class="bottom-nav">
-      <a href="#">🏠<strong>Home</strong></a>
-      <a href="#">💱<strong>Trade</strong></a>
-      <a href="#">📝<strong>Betslip</strong></a>
-      <a href="#">🎯<strong>Sportsbook</strong></a>
-      <a href="#">📦<strong>Orders</strong></a>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
+st.markdown("""
+<div class="bottom-nav">
+<a href="#">🏠<strong>Home</strong></a>
+<a href="#">💱<strong>Trade</strong></a>
+<a href="#">📝<strong>Betslip</strong></a>
+<a href="#">🎯<strong>Sportsbook</strong></a>
+<a href="#">📦<strong>Orders</strong></a>
+</div>
+""", unsafe_allow_html=True)
