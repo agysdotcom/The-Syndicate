@@ -253,6 +253,16 @@ if league_names:
                 st.markdown(f"**Recommendation:** {game['best_bet']}")
                 st.markdown(f"**AI Prediction Confidence:** {game['confidence']}")
                 st.text(generate_narrative(game))
-
 else:
     st.info("No fixtures to display for selected league and date.")
+
+# ---------------- Betslips Display ----------------
+st.markdown("---")
+st.header("Betslips for Selected League/All")
+betslips = generate_betslips(fixtures)
+for name, picks in betslips.items():
+    st.subheader(name)
+    if not picks:
+        st.info("No picks available.")
+    for p in picks:
+        st.markdown(f"**{p['match']}** | Bet: {p['pick']} | Probability: {p['prob'] if p['prob'] is not None else 'N/A'} | Confidence: {p['confidence']}")
