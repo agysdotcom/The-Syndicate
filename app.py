@@ -6,14 +6,16 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-from nltk.sentiment import SentimentIntensityAnalyzer
-import nltk
 
-# NLP setup
+# ---------------- NLP Fix ----------------
 try:
-    nltk.data.find("sentiment/vader_lexicon.zip")
+    import nltk
+    from nltk.sentiment.vader import SentimentIntensityAnalyzer
+    nltk.data.find("sentiment/vader_lexicon")
 except:
+    import nltk
     nltk.download("vader_lexicon")
+    from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 sia = SentimentIntensityAnalyzer()
 
@@ -163,44 +165,6 @@ def fetch_odds(home: str, away: str, date_iso: str) -> Dict:
         return match or {}
     except:
         return {}
-
-def extract_match_odds(odds_obj: Dict) -> Tuple[Optional[float],Optional[float],Optional[float]]:
-    try:
-        sites = odds_obj.get("bookmakers",[])
-        if not sites: return None,None,None
-        market = sites[0].get("markets",[])[0]
-        prices = market.get("outcomes",[])
-        d = {p['name'].lower():p['price'] for p in prices if 'name' in p and 'price' in p}
-        home = d.get("home")
-        draw = d.get("draw")
-        away = d.get("away")
-        return home,draw,away
-    except:
-        return None,None,None
-
-@st.cache_data(ttl=60*30)
-def fetch_news_snippets(team: str) -> List[str]:
-    try:
-        params = {
-            "q": f"{team} injury press conference latest",
-            "apiKey": NEWSAPI_KEY,
-            "language": "en",
-            "pageSize": 5,
-            "sortBy": "publishedAt"
-        }
-        r = requests.get("https://newsapi.org/v2/everything", params=params, timeout=15)
-        data = r.json() if r.ok else {}
-        articles = data.get("articles", [])
-        snippets = [a.get("title","") for a in articles if a.get("title")]
-        return snippets
-    except:
-        return []
-
-def sentiment_score(text_list: List[str]) -> float:
-    if not text_list: return 0.0
-    scores = [sia.polarity_scores(t)['compound'] for t in text_list]
-    return np.mean(scores)
-
 # ---------------- Prediction ----------------
 def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: Optional[float], news_score: float=0.0) -> Tuple[float,float,float]:
     probs = _odds_to_implied([h_odds,d_odds,a_odds])
