@@ -90,7 +90,6 @@ st.markdown('<div style="text-align:center; margin-bottom: 1rem;">'
 # ---------------- Helpers ----------------
 def safe_parse_datetime_utc_to_johannesburg(date_utc: str) -> datetime:
     try:
-        # Remove trailing Z, parse as UTC
         if date_utc.endswith("Z"):
             date_utc = date_utc[:-1]
         dt_utc = datetime.fromisoformat(date_utc).replace(tzinfo=timezone.utc)
@@ -293,8 +292,8 @@ def render_fixture(f):
 
 
 # ---------------- Prepare and show fixtures ----------------
-fixtures_favourites = []  # Placeholder, your logic here
-fixtures_live = []        # Placeholder, your logic here
+fixtures_favourites = []  # Placeholder, to implement your logic as needed
+fixtures_live = []        # Placeholder, to implement your logic as needed
 
 def prepare_fixtures_for_date(date_iso: str) -> List[Dict]:
     all_fixtures = []
@@ -330,25 +329,23 @@ def prepare_fixtures_for_date(date_iso: str) -> List[Dict]:
 fixtures_today = prepare_fixtures_for_date(date_today)
 fixtures_tomorrow = prepare_fixtures_for_date(date_tomorrow)
 
-
 with tabs[0]:
     st.info("Favourites tab content goes here.")
     for fx in fixtures_favourites:
         render_fixture(fx)
 
-with tabs[11]:
+with tabs[1]:
     st.info("Live tab content goes here.")
     for fx in fixtures_live:
         render_fixture(fx)
 
-with tabs[12]:
+with tabs[4]:
     for fx in fixtures_today:
         render_fixture(fx)
 
-with tabs[13]:
+with tabs[9]:
     for fx in fixtures_tomorrow:
         render_fixture(fx)
-
 
 # ---------------- Bottom Nav ----------------
 st.markdown("""
