@@ -266,3 +266,5 @@ for name, picks in betslips.items():
         st.info("No picks available.")
     for p in picks:
         st.markdown(f"**{p['match']}** | Bet: {p['pick']} | Probability: {p['prob'] if p['prob'] is not None else 'N/A'} | Confidence: {p['confidence']}")
+
+        
