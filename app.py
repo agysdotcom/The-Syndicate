@@ -10,32 +10,25 @@ import streamlit as st
 import nltk
 import pytz
 
-
 # NLP setup for SentimentIntensityAnalyzer
 try:
     nltk.data.find("sentiment/vader_lexicon.zip")
 except LookupError:
     nltk.download("vader_lexicon")
 
-
 from nltk.sentiment import SentimentIntensityAnalyzer
-
 
 sia = SentimentIntensityAnalyzer()
 
-
 # ---------------- Config ----------------
 st.set_page_config(page_title="THE SYNDICATE - Soccer Predictor", layout="wide")
-
 
 API_FOOTBALL_KEY = "a6917f6db6a731e8b6cfa9f9f365a5ed"
 THEODDSAPI_KEY = "69bb2856e8ec4ad7b9a12f305147b408"
 NEWSAPI_KEY = "c7d0efc525bf48199ab229f8f70fbc01"
 
-
 BASE_FOOTBALL = "https://v3.football.api-sports.io"
 BASE_ODDS = "https://api.the-odds-api.com/v4"
-
 
 LEAGUES = {
     "Premier League": 39,
@@ -52,10 +45,8 @@ LEAGUES = {
     "Conference League": 848,
 }
 
-
 HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
 
-# Johannesburg timezone
 JOHANNESBURG_TZ = pytz.timezone("Africa/Johannesburg")
 
 # ---------------- Style ----------------
@@ -86,7 +77,6 @@ st.markdown('<div style="text-align:center; margin-bottom: 1rem;">'
             '<span style="font-size:1rem; color:#94a3b8;">Football Predictions • 2025–2026</span>'
             '</div>', unsafe_allow_html=True)
 
-
 # ---------------- Helpers ----------------
 def safe_parse_datetime_utc_to_johannesburg(date_utc: str) -> datetime:
     try:
@@ -98,13 +88,11 @@ def safe_parse_datetime_utc_to_johannesburg(date_utc: str) -> datetime:
     except Exception:
         return datetime.now(tz=JOHANNESBURG_TZ)
 
-
 def _proportional_devig(prob_list: List[float]) -> List[float]:
     s = sum(prob_list)
     if s == 0:
         return prob_list
     return [p / s for p in prob_list]
-
 
 def _odds_to_implied(odds: List[float]) -> List[float]:
     probs = []
@@ -116,25 +104,20 @@ def _odds_to_implied(odds: List[float]) -> List[float]:
             probs.append(0.0)
     return probs
 
-
 def poisson_pmf(k, lam):
     return np.exp(-lam) * (lam ** k) / math.factorial(k)
-
 
 def poisson_cdf_over(total_line_half: float, lam_total: float) -> float:
     floor_needed = int(math.floor(total_line_half + 0.5))
     c = sum(poisson_pmf(k, lam_total) for k in range(floor_needed))
     return 1.0 - c
 
-
 def make_star_confidence(value: float) -> str:
     score = max(0.0, min(1.0, value))
     stars = int(np.clip(1 + round(4*score), 1, 5))
     return "⭐"*stars
 
-
 # ---------------- Fetch Data ----------------
-
 @st.cache_data(ttl=60*15)
 def fetch_api_football_fixtures(league_id: int, date_iso: str) -> List[Dict]:
     try:
@@ -165,7 +148,6 @@ def fetch_api_football_fixtures(league_id: int, date_iso: str) -> List[Dict]:
     except Exception as e:
         print("Error fetching API-Football fixtures:", e)
         return []
-
 
 @st.cache_data(ttl=60*30)
 def fetch_odds(home: str, away: str, date_iso: str) -> Dict:
@@ -202,7 +184,6 @@ def fetch_odds(home: str, away: str, date_iso: str) -> Dict:
     except:
         return {}
 
-
 def extract_match_odds(odds_obj: Dict) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     try:
         sites = odds_obj.get("bookmakers", [])
@@ -217,7 +198,6 @@ def extract_match_odds(odds_obj: Dict) -> Tuple[Optional[float], Optional[float]
         return home, draw, away
     except:
         return None, None, None
-
 
 @st.cache_data(ttl=60*30)
 def fetch_news_snippets(team: str) -> List[str]:
@@ -237,13 +217,11 @@ def fetch_news_snippets(team: str) -> List[str]:
     except:
         return []
 
-
 def sentiment_score(text_list: List[str]) -> float:
     if not text_list:
         return 0.0
     scores = [sia.polarity_scores(t)['compound'] for t in text_list]
     return np.mean(scores)
-
 
 # ---------------- Prediction ----------------
 def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: Optional[float], news_score: float=0.0) -> Tuple[float, float, float]:
@@ -256,7 +234,6 @@ def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: O
     probs = [p / s for p in probs]
     return tuple(probs)
 
-
 def over_under_probs(xg_home: float, xg_away: float) -> Dict[str, float]:
     total_xg = xg_home + xg_away
     lines = [0.5, 1.5, 2.5, 3.5, 4.5]
@@ -266,13 +243,11 @@ def over_under_probs(xg_home: float, xg_away: float) -> Dict[str, float]:
         res[f"Under {l}"] = 1 - res[f"Over {l}"]
     return res
 
-
 # ---------------- UI ----------------
 tabs = st.tabs(["Favourites","Live","Today","Tomorrow"])
 
 date_today = datetime.utcnow().strftime("%Y-%m-%d")
 date_tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
-
 
 def render_fixture(f):
     with st.expander(f"{f['home']} vs {f['away']} | {f['leagueName']} | {safe_parse_datetime_utc_to_johannesburg(f['utc']).strftime('%H:%M SAST')} | Status: {f['status']}"):
@@ -290,10 +265,8 @@ def render_fixture(f):
         for n in f['news']:
             st.markdown(f"- {n}")
 
-
-# Prepare placeholders for favourites and live tabs
-fixtures_favourites = []  # To be implemented
-fixtures_live = []        # To be implemented
+fixtures_favourites = []  # Implement your logic here
+fixtures_live = []        # Implement your logic here
 
 def prepare_fixtures_for_date(date_iso: str) -> List[Dict]:
     all_fixtures = []
@@ -321,7 +294,6 @@ def prepare_fixtures_for_date(date_iso: str) -> List[Dict]:
             })
     return all_fixtures
 
-
 fixtures_today = prepare_fixtures_for_date(date_today)
 fixtures_tomorrow = prepare_fixtures_for_date(date_tomorrow)
 
@@ -330,19 +302,18 @@ with tabs[0]:
     for fx in fixtures_favourites:
         render_fixture(fx)
 
-with tabs[9]:
+with tabs[1]:
     st.info("Live tab content goes here.")
     for fx in fixtures_live:
         render_fixture(fx)
 
-with tabs[10]:
+with tabs[2]:
     for fx in fixtures_today:
         render_fixture(fx)
 
-with tabs[11]:
+with tabs[3]:
     for fx in fixtures_tomorrow:
         render_fixture(fx)
-
 
 # ---------------- Bottom Nav ----------------
 st.markdown("""
