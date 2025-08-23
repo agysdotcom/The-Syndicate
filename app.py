@@ -1,189 +1,275 @@
-# app.py - Streamlit Neon Sportsbook
-import os, math, requests, streamlit as st
-import pandas as pd, numpy as np
+# app.py
+import os, math, time
 from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional
+import numpy as np
+import pandas as pd
+import requests
+import streamlit as st
 from nltk.sentiment import SentimentIntensityAnalyzer
 import nltk
-from transformers import pipeline
 
-# ---------- Setup ----------
-st.set_page_config(page_title="⚡ THE SYNDICATE", layout="wide", page_icon="⚽")
-nltk.download("vader_lexicon")
+# NLP setup
+try:
+    nltk.data.find("sentiment/vader_lexicon.zip")
+except:
+    nltk.download("vader_lexicon")
+
 sia = SentimentIntensityAnalyzer()
-summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
 
-# ---------- API Keys ----------
-API_FOOTBALL_KEY = st.secrets.get("API_FOOTBALL_KEY")
-THEODDSAPI_KEY = st.secrets.get("THEODDSAPI_KEY")
-NEWSAPI_KEY = st.secrets.get("NEWSAPI_KEY")
-HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY} if API_FOOTBALL_KEY else {}
+# ---------------- Config ----------------
+st.set_page_config(page_title="THE SYNDICATE - Soccer Predictor", layout="wide")
 
-# ---------- Leagues ----------
+API_FOOTBALL_KEY = "a6917f6db6a731e8b6cfa9f9f365a5ed"
+THEODDSAPI_KEY = "69bb2856e8ec4ad7b9a12f305147b408"
+NEWSAPI_KEY = "c7d0efc525bf48199ab229f8f70fbc01"
+
+BASE_FOOTBALL = "https://v3.football.api-sports.io"
+BASE_OPENLIGA = "https://api.openligadb.de"
+BASE_ODDS = "https://api.the-odds-api.com/v4"
+
 LEAGUES = {
-    "Premier League": 39, "La Liga": 140, "Serie A": 135, "Bundesliga": 78,
-    "Ligue 1": 61, "Eredivisie": 88, "Primeira Liga": 94, "Scottish Premiership": 179,
-    "Belgian Pro League": 144, "Champions League": 2, "Europa League": 3, "Conference League": 848
+    "Premier League": 39,
+    "La Liga": 140,
+    "Serie A": 135,
+    "Bundesliga": 78,
+    "Ligue 1": 61,
+    "Eredivisie": 88,
+    "Primeira Liga": 94,
+    "Scottish Premiership": 179,
+    "Belgian Pro League": 144,
+    "Champions League": 2,
+    "Europa League": 3,
+    "Conference League": 848,
 }
 
-# ---------- Utils ----------
-def safe_float(x):
-    try: return float(x)
-    except: return None
+HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
 
-def odds_to_implied(odds):
-    return [1/o if o and o>0 else 0 for o in odds]
+# ---------------- Style ----------------
+st.markdown("""
+<style>
+body {background:#0b0d12;}
+.stApp {background:#0b0d12; color:#e5e7eb;}
+.card {background:#121420; border:1px solid #1e2233; border-radius:18px; padding:18px; margin-bottom:18px;}
+.odds-box {background:#0e111a; border:1px solid #20263b; border-radius:12px; padding:10px; margin:5px 0;}
+.chip { padding:3px 10px; border-radius:999px; font-size:0.75rem; }
+.chip.live { background:#172a1f; color:#22c55e; border:1px solid #134e4a; }
+.chip.value { background:#19242d; color:#22d3ee; border:1px solid #164e63; }
+.bar { height:10px; background:#0f172a; border-radius:999px; overflow:hidden; margin-top:5px;}
+.bar > div { height:100%; background:linear-gradient(90deg,#22d3ee,#60a5fa); }
+.neon-green { color:#22c55e; }
+.neon-red { color:#f87171; }
+.neon-amber { color:#fbbf24; }
+.neon-blue { color:#60a5fa; }
+.bottom-nav {position:fixed; left:0; right:0; bottom:0; background:#0c0f16; border-top:1px solid #1f2940; display:flex; gap:14px; justify-content:space-around; padding:10px 10px; z-index:999;}
+.bottom-nav a { color:#cbd5e1; text-decoration:none; font-size:0.9rem; }
+.bottom-nav a strong { display:block; font-size:0.75rem; color:#93c5fd; }
+</style>
+""", unsafe_allow_html=True)
 
-def devig(probs):
-    s=sum(probs)
-    return [p/s for p in probs] if s>0 else probs
+st.markdown('<div style="text-align:center; margin-bottom: 0.8rem;">'
+            '<span style="font-size:2.2rem; font-weight:800; color:#60a5fa;">⚡ THE SYNDICATE</span><br>'
+            '<span style="font-size:1rem; color:#94a3b8;">Football Predictions • 2025–2026</span>'
+            '</div>', unsafe_allow_html=True)
 
-def poisson_probs(lam, max_goals=5):
-    return [math.exp(-lam)*(lam**k)/math.factorial(k) for k in range(max_goals+1)]
+# ---------------- Helpers ----------------
+def safe_parse_datetime(date_utc: str) -> datetime:
+    try:
+        if date_utc.endswith("Z"):
+            date_utc = date_utc[:-1] + "+00:00"
+        return datetime.fromisoformat(date_utc)
+    except:
+        return datetime.utcnow()
 
-def poisson_over(lam, line):
-    return 1 - sum(poisson_probs(lam)[:int(line+1)])
+def _proportional_devig(prob_list: List[float]) -> List[float]:
+    s = sum(prob_list)
+    if s == 0:
+        return prob_list
+    return [p / s for p in prob_list]
 
-def confidence_stars(score):
+def _odds_to_implied(odds: List[float]) -> List[float]:
+    probs = []
+    for o in odds:
+        try:
+            o = float(o)
+            probs.append(1.0 / o if o > 1e-9 else 0.0)
+        except:
+            probs.append(0.0)
+    return probs
+
+def poisson_pmf(k, lam):
+    return np.exp(-lam) * (lam ** k) / math.factorial(k)
+
+def poisson_cdf_over(total_line_half: float, lam_total: float) -> float:
+    floor_needed = int(math.floor(total_line_half + 0.5))
+    c = sum(poisson_pmf(k, lam_total) for k in range(floor_needed))
+    return 1.0 - c
+
+def make_star_confidence(value: float) -> str:
+    score = max(0.0, min(1.0, value))
     stars = int(np.clip(1 + round(4*score),1,5))
     return "⭐"*stars
 
-# ---------- Fetch Fixtures ----------
-@st.cache_data(ttl=600)
-def fetch_fixtures(league_id, date_iso):
-    url=f"https://v3.football.api-sports.io/fixtures?league={league_id}&season=2025&date={date_iso}"
-    r=requests.get(url, headers=HEADERS_FOOTBALL, timeout=10)
-    if r.ok: return r.json().get("response",[])
-    return []
-
-# ---------- Fetch Odds ----------
-@st.cache_data(ttl=300)
-def fetch_odds(home, away):
-    url="https://api.the-odds-api.com/v4/sports/soccer/odds"
-    params={"apiKey":THEODDSAPI_KEY,"regions":"uk,eu,us","markets":"h2h,totals","oddsFormat":"decimal"}
-    r=requests.get(url,params=params,timeout=10)
-    if not r.ok: return {}
-    for ev in r.json():
-        if home.lower() in ev.get("home_team","").lower() and away.lower() in ev.get("away_team","").lower():
-            return ev
-    return {}
-
-def extract_h2h(odds_obj):
+# ---------------- Fetch Data ----------------
+@st.cache_data(ttl=60*15)
+def fetch_openligadb_fixtures(date_iso: str) -> List[Dict]:
     try:
-        for bk in odds_obj.get("bookmakers",[]):
-            for mk in bk.get("markets",[]):
-                if mk.get("key")=="h2h":
-                    outcomes=mk.get("outcomes",[])
-                    home=draw=away=None
-                    for o in outcomes:
-                        n=o.get("name","").lower()
-                        p=safe_float(o.get("price"))
-                        if "draw" in n: draw=p
-                        elif "home" in n: home=p
-                        else: away=p
-                    return home,draw,away
-    except: return None,None,None
-    return None,None,None
+        r = requests.get(f"{BASE_OPENLIGA}/getmatchdata/{date_iso}", timeout=15)
+        data = r.json() if r.ok else []
+        fixtures = []
+        for m in data:
+            try:
+                utc_kick = m.get("MatchDateTimeUTC") or m.get("MatchDateTime")
+                utc_kick = utc_kick.replace(" ","T")+"Z" if " " in utc_kick else utc_kick
+                fixtures.append({
+                    "leagueName": m.get("LeagueName","Unknown"),
+                    "home": m["Team1"]["TeamName"],
+                    "away": m["Team2"]["TeamName"],
+                    "utc": utc_kick,
+                    "status": "NS" if not m.get("MatchIsFinished") else "FT",
+                })
+            except:
+                continue
+        return fixtures
+    except:
+        return []
 
-# ---------- Fetch News ----------
-def fetch_news(team):
-    if not NEWSAPI_KEY: return []
-    url="https://newsapi.org/v2/everything"
-    params={"q":f"{team} injury OR press conference","from":(datetime.utcnow()-timedelta(days=2)).isoformat(),"sortBy":"publishedAt","apiKey":NEWSAPI_KEY,"language":"en"}
-    r=requests.get(url, params=params, timeout=5)
-    if r.ok: return r.json().get("articles",[])
-    return []
+@st.cache_data(ttl=60*30)
+def fetch_odds(home: str, away: str, date_iso: str) -> Dict:
+    try:
+        url = f"{BASE_ODDS}/sports/soccer/odds"
+        params = {
+            "apiKey": THEODDSAPI_KEY,
+            "regions": "uk,eu,us",
+            "markets": "h2h,totals",
+            "oddsFormat": "decimal",
+            "dateFormat": "iso",
+        }
+        r = requests.get(url, params=params, timeout=20)
+        if not r.ok: return {}
+        data = r.json()
+        match = None
+        target_date = date_iso[:10]
+        for ev in data:
+            try:
+                if not ev.get("commence_time","").startswith(target_date):
+                    continue
+                ht = ev["home_team"]; at = ev["away_team"]
+                if home.lower() in ht.lower() and away.lower() in at.lower():
+                    match = ev; break
+                if home.lower() in at.lower() and away.lower() in ht.lower():
+                    match = ev; break
+            except: continue
+        return match or {}
+    except:
+        return {}
 
-def summarize_sentiment(news_articles):
-    pos=neg=0
-    for a in news_articles:
-        text=a.get("title","") + ". " + a.get("description","")
-        summary = summarizer(text,max_length=50,min_length=25,do_sample=False)[0]['summary_text'] if summarizer else text
-        score = sia.polarity_scores(summary)["compound"] if sia else 0
-        if score>0.1: pos+=1
-        elif score<-0.1: neg+=1
-    total=max(pos+neg,1)
-    return {"positive":pos/total,"negative":neg/total,"neutral":1-(pos+neg)/total}
+def extract_match_odds(odds_obj: Dict) -> Tuple[Optional[float],Optional[float],Optional[float]]:
+    try:
+        sites = odds_obj.get("bookmakers",[])
+        if not sites: return None,None,None
+        market = sites[0].get("markets",[])[0]
+        prices = market.get("outcomes",[])
+        d = {p['name'].lower():p['price'] for p in prices if 'name' in p and 'price' in p}
+        home = d.get("home")
+        draw = d.get("draw")
+        away = d.get("away")
+        return home,draw,away
+    except:
+        return None,None,None
 
-# ---------- Neon Styles ----------
+@st.cache_data(ttl=60*30)
+def fetch_news_snippets(team: str) -> List[str]:
+    try:
+        params = {
+            "q": f"{team} injury press conference latest",
+            "apiKey": NEWSAPI_KEY,
+            "language": "en",
+            "pageSize": 5,
+            "sortBy": "publishedAt"
+        }
+        r = requests.get("https://newsapi.org/v2/everything", params=params, timeout=15)
+        data = r.json() if r.ok else {}
+        articles = data.get("articles", [])
+        snippets = [a.get("title","") for a in articles if a.get("title")]
+        return snippets
+    except:
+        return []
+
+def sentiment_score(text_list: List[str]) -> float:
+    if not text_list: return 0.0
+    scores = [sia.polarity_scores(t)['compound'] for t in text_list]
+    return np.mean(scores)
+
+# ---------------- Prediction ----------------
+def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: Optional[float], news_score: float=0.0) -> Tuple[float,float,float]:
+    probs = _odds_to_implied([h_odds,d_odds,a_odds])
+    probs = _proportional_devig(probs)
+    probs = [min(max(p + 0.05*news_score,0.0),1.0) for p in probs]
+    s = sum(probs)
+    probs = [p/s for p in probs]
+    return tuple(probs)
+
+def over_under_probs(xg_home: float, xg_away: float) -> Dict[str,float]:
+    total_xg = xg_home + xg_away
+    lines = [0.5,1.5,2.5,3.5,4.5]
+    res = {}
+    for l in lines:
+        res[f"Over {l}"] = poisson_cdf_over(l, total_xg)
+        res[f"Under {l}"] = 1 - res[f"Over {l}"]
+    return res
+
+# ---------------- UI ----------------
+tab = st.tabs(["Favourites","Live","Today","Tomorrow"])
+date_today = datetime.utcnow().strftime("%Y-%m-%d")
+date_tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+def render_fixtures(fixtures: List[Dict], date_iso: str):
+    if not fixtures:
+        st.warning("No fixtures found.")
+        return
+    for f in fixtures:
+        home,away = f["home"],f["away"]
+        utc = f["utc"]
+        status = f["status"]
+        # fetch odds
+        o = fetch_odds(home,away,date_iso)
+        h_od,d_od,a_od = extract_match_odds(o)
+        # fetch news
+        news = fetch_news_snippets(home) + fetch_news_snippets(away)
+        news_s = sentiment_score(news)
+        # predict
+        ph,pd,pa = predict_win_odds(h_od,d_od,a_od,news_s)
+        # dummy xG for Poisson
+        xg_home,xg_away = 1.3 + ph*1.5, 1.1 + pa*1.5
+        ou = over_under_probs(xg_home,xg_away)
+        best_bet = "🏆 Strong Pick" if max(ph,pa) > 0.6 else ""
+        conf = make_star_confidence(max(ph,pa))
+        # display
+        st.markdown(f'<div class="card">',unsafe_allow_html=True)
+        st.markdown(f'**{f["leagueName"]}** | {safe_parse_datetime(utc).strftime("%H:%M UTC")} | Status: {status}')
+        st.markdown(f'**{home}** vs **{away}** {f"<span class=\'chip value\'>{best_bet}</span>" if best_bet else ""}', unsafe_allow_html=True)
+        st.markdown(f'<div class="odds-box">Home: {ph:.2%} | Draw: {pd:.2%} | Away: {pa:.2%}</div>',unsafe_allow_html=True)
+        st.markdown(f'Confidence: {conf} | News sentiment: {news_s:.2f}')
+        ou_table = "<br>".join([f"{k}: {v:.2%}" for k,v in ou.items()])
+        st.markdown(f'<div class="odds-box">{ou_table}</div>', unsafe_allow_html=True)
+        st.markdown("</div>",unsafe_allow_html=True)
+
+with tab[2]:  # Today
+    fixtures = fetch_openligadb_fixtures(date_today)
+    render_fixtures(fixtures, date_today)
+
+with tab[3]:  # Tomorrow
+    fixtures = fetch_openligadb_fixtures(date_tomorrow)
+    render_fixtures(fixtures, date_tomorrow)
+
+# ---------------- Bottom Nav ----------------
 st.markdown("""
-<style>
-body {background-color:#0d0d0d; color:#39FF14;}
-h1 {text-align:center; color:#39FF14;}
-.expanderHeader {color:#39FF14; font-weight:bold;}
-.win-bar {height:20px; border-radius:5px; margin-bottom:3px;}
-.win-green {background:#00FF7F;}
-.win-amber {background:#FFD700;}
-.win-red {background:#FF3131;}
-.strong-pick {color:#39FF14; font-weight:bold; text-shadow:0 0 8px #39FF14;}
-.live-badge {color:#FF3131; font-weight:bold; text-shadow:0 0 8px #FF3131;}
-</style>
-""",unsafe_allow_html=True)
-
-# ---------- UI ----------
-st.markdown("<h1>⚡ THE SYNDICATE - Football Predictor</h1>",unsafe_allow_html=True)
-selected_date=st.date_input("Select date",datetime.utcnow())
-date_iso=selected_date.isoformat()
-
-# Bottom Bar
-st.markdown("""
-<style>
-.footer {position:fixed; bottom:0; width:100%; background-color:#0d0d0d; color:#39FF14; text-align:center; padding:10px; font-size:18px;}
-.footer a {color:#39FF14; margin:20px; text-decoration:none; font-weight:bold;}
-</style>
-<div class="footer">
-<a href='#'>Home</a> | <a href='#'>Trade</a> | <a href='#'>Betslip</a> | <a href='#'>Sportsbook</a> | <a href='#'>My Orders</a>
+<div class="bottom-nav">
+<a href="#">🏠<strong>Home</strong></a>
+<a href="#">💱<strong>Trade</strong></a>
+<a href="#">📝<strong>Betslip</strong></a>
+<a href="#">🎯<strong>Sportsbook</strong></a>
+<a href="#">📦<strong>Orders</strong></a>
 </div>
 """, unsafe_allow_html=True)
-
-tabs=st.tabs(["Today","Tomorrow"])
-for tab,label in zip(tabs,[0,1]):
-    with tab:
-        date_use=(selected_date+timedelta(days=label)).isoformat()
-        for lname,lid in LEAGUES.items():
-            fixtures=fetch_fixtures(lid,date_use)
-            for f in fixtures:
-                home=f["teams"]["home"]["name"]
-                away=f["teams"]["away"]["name"]
-                kickoff=f['fixture']['date'][:16]
-                live = f.get("fixture",{}).get("status",{}).get("short","NS")=="LIVE"
-                live_badge = "<span class='live-badge'>LIVE</span>" if live else ""
-                
-                st.markdown(f"### {lname} | {home} vs {away} | {kickoff} {live_badge}",unsafe_allow_html=True)
-                
-                odds_obj=fetch_odds(home,away)
-                h_odd,d_odd,a_odd=extract_h2h(odds_obj)
-                probs=devig(odds_to_implied([h_odd,d_odd,a_odd]))
-                
-                # News & sentiment
-                news=fetch_news(home)+fetch_news(away)
-                sentiment=summarize_sentiment(news)
-                adj_factor=sentiment["positive"]-sentiment["negative"]
-                adj_probs=[min(max(p+adj_factor*0.1,0),1) for p in probs]
-                adj_probs=devig(adj_probs)
-                
-                # Poisson Over/Under
-                lam_home,lam_away=1.2,1.0 # placeholder
-                ou_probs={line:poisson_over(lam_home+lam_away,line) for line in [0.5,1.5,2.5,3.5,4.5]}
-                
-                # Strong Pick
-                strong_pick = "<span class='strong-pick'>💚 Strong Pick!</span>" if adj_probs[0]>0.55 or adj_probs[2]>0.55 else ""
-                
-                # Expandable card
-                with st.expander(f"{home} vs {away} {strong_pick}", expanded=False):
-                    # Win % bars
-                    colors = ["win-green" if p>0.55 else "win-amber" if 0.45<=p<=0.55 else "win-red" for p in adj_probs]
-                    for t,p,c in zip([home,"Draw",away],adj_probs,colors):
-                        st.markdown(f"{t}: <div class='win-bar {c}' style='width:{int(p*100)}%'></div>",unsafe_allow_html=True)
-                    # Odds
-                    st.markdown(f"**Odds H/D/A:** {h_odd}/{d_odd}/{a_odd}")
-                    # Poisson
-                    st.markdown("**Poisson Over Probabilities:**")
-                    st.table(pd.DataFrame.from_dict(ou_probs,orient='index',columns=["Over Probability"]).style.format("{:.1%}"))
-                    # Confidence
-                    st.markdown(f"**Confidence:** {confidence_stars(sum(adj_probs)/3)}")
-                    # News highlights
-                    st.markdown("**News Highlights:**")
-                    for n in news[:3]: st.markdown(f"- {n['title']}")
-                    # Best Bet
-                    st.markdown(f"**Best Bet:** {'H' if adj_probs[0]>0.55 else 'A' if adj_probs[2]>0.55 else 'D'}")
-                st.markdown("---")
