@@ -242,7 +242,7 @@ def over_under_probs(xg_home: float, xg_away: float) -> Dict[str, float]:
     return res
 
 # ---------------- UI ----------------
-tab = st.tabs(["Favourites", "Live", "Today", "Tomorrow"])
+tab1, tab2, tab3, tab4 = st.tabs(["Favourites", "Live", "Today", "Tomorrow"])
 
 date_today = datetime.utcnow().strftime("%Y-%m-%d")
 date_tomorrow = (datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -255,20 +255,15 @@ def render_fixtures(fixtures: List[Dict], date_iso: str):
         home, away = f["home"], f["away"]
         utc = f["utc"]
         status = f["status"]
-        # fetch odds
         o = fetch_odds(home, away, date_iso)
         h_od, d_od, a_od = extract_match_odds(o)
-        # fetch news
         news = fetch_news_snippets(home) + fetch_news_snippets(away)
         news_s = sentiment_score(news)
-        # predict
         ph, pd, pa = predict_win_odds(h_od, d_od, a_od, news_s)
-        # dummy xG for Poisson
         xg_home, xg_away = 1.3 + ph * 1.5, 1.1 + pa * 1.5
         ou = over_under_probs(xg_home, xg_away)
         best_bet = "🏆 Strong Pick" if max(ph, pa) > 0.6 else ""
         conf = make_star_confidence(max(ph, pa))
-        # display
         st.markdown(f'<div class="card">', unsafe_allow_html=True)
         st.markdown(f'**{f["leagueName"]}** | {safe_parse_datetime(utc).strftime("%H:%M UTC")} | Status: {status}')
         st.markdown(f'**{home}** vs **{away}** {f"<span class=\'chip value\'>{best_bet}</span>" if best_bet else ""}', unsafe_allow_html=True)
@@ -278,13 +273,20 @@ def render_fixtures(fixtures: List[Dict], date_iso: str):
         st.markdown(f'<div class="odds-box">{ou_table}</div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
-with tab[2]:
+with tab1:
+    st.info("Favourites tab content goes here.")
+
+with tab2:
+    st.info("Live tab content goes here.")
+
+with tab3:
     fixtures = fetch_openligadb_fixtures(date_today)
     render_fixtures(fixtures, date_today)
 
-with tab:
+with tab4:
     fixtures = fetch_openligadb_fixtures(date_tomorrow)
     render_fixtures(fixtures, date_tomorrow)
+
 
 # ---------------- Bottom Nav ----------------
 st.markdown(
