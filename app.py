@@ -18,7 +18,6 @@ sia = SentimentIntensityAnalyzer()
 
 st.set_page_config(page_title="THE SYNDICATE - AI Soccer Predictor", layout="wide")
 
-# API keys (use env vars or hardcoded for demo)
 API_FOOTBALL_KEY = "a6917f6db6a731e8b6cfa9f9f365a5ed"
 THEODDSAPI_KEY = "69bb2856e8ec4ad7b9a12f305147408"
 NEWSAPI_KEY = "c7d0efc525bf48199ab229f8f70fbc01"
@@ -34,9 +33,9 @@ LEAGUES = {
 }
 
 HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
-CAPE_TOWN_TZ = pytz.timezone("Africa/Johannesburg")
+CAPE_TOWN_TZ = pytz.timezone("Africa/Johannesburg")  # GMT+2 Cape Town time
 
-# Custom CSS for card-based UI
+# Custom CSS for styling cards, bars, badges, boxes
 st.markdown("""
 <style>
 .card {
@@ -44,7 +43,7 @@ st.markdown("""
     border-radius: 12px;
     padding: 16px;
     margin-bottom: 20px;
-    box-shadow: 0 4px 12px rgb(32 34 44 / 0.5);
+    box-shadow: 0 4px 12px rgba(32, 34, 44, 0.5);
     color: #e1e8ed;
 }
 .league-header {
@@ -110,6 +109,12 @@ st.markdown("""
     font-size: 1rem;
     margin-left: 8px;
 }
+.narrative {
+    margin: 12px 0 10px 0;
+    font-size: 0.9rem;
+    color: #aab8c2;
+    white-space: pre-line;
+}
 .add-betslip {
     text-align: right;
     margin-top: 12px;
@@ -117,8 +122,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
-# Helper functions (safe parse date, probabilities, sentiment ...)
+# Helper functions (safe datetime, sentiment, odds etc)
 def safe_parse_datetime_utc_to_capetown(date_utc: str) -> datetime:
     try:
         dt_utc = datetime.fromisoformat(date_utc.replace("Z", "")).replace(tzinfo=timezone.utc)
@@ -164,8 +168,8 @@ def make_star_confidence(value: float) -> str:
     stars = int(np.clip(1 + round(4 * value), 1, 5))
     return "⭐" * stars
 
+# Data fetching functions...
 
-# API Fetchers -
 @st.cache_data(ttl=900)
 def fetch_fixtures(league_id: int, date_iso: str) -> List[Dict]:
     try:
@@ -194,7 +198,6 @@ def fetch_fixtures(league_id: int, date_iso: str) -> List[Dict]:
 
 @st.cache_data(ttl=600)
 def fetch_match_stats(fixture_id: int) -> Dict:
-    # Placeholder data
     return {"corners": {"home": 3, "away": 4}, "yellow_cards": {"home": 1, "away": 2}}
 
 @st.cache_data(ttl=1800)
@@ -244,8 +247,6 @@ def fetch_news_snippets(team: str) -> List[str]:
     except:
         return []
 
-
-# Prediction functions
 def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: Optional[float], news_score: float=0) -> Tuple[float, float, float]:
     probs = _odds_to_implied([h_odds, d_odds, a_odds])
     probs = _proportional_devig(probs)
@@ -253,7 +254,7 @@ def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: O
     s = sum(probs)
     if s == 0:
         return 1/3, 1/3, 1/3
-    return tuple(p / s for p in probs)
+    return tuple(p/s for p in probs)
 
 def over_under_probs(xg_home: float, xg_away: float) -> Dict[str, float]:
     total = xg_home + xg_away
@@ -262,7 +263,6 @@ def over_under_probs(xg_home: float, xg_away: float) -> Dict[str, float]:
         res[f"Over {l}"] = poisson_cdf_over(l, total)
         res[f"Under {l}"] = 1 - res[f"Over {l}"]
     return res
-
 
 def prepare_fixtures_with_stats(league_id:int, date_iso:str)->List[Dict]:
     fixtures = fetch_fixtures(league_id, date_iso)
@@ -298,6 +298,18 @@ def color_bar(width: float, css_class: str) -> str:
     return f'<div class="pred-bar"><div class="{css_class}" style="width:{width_pct}%;"></div></div>'
 
 
+def generate_narrative(game: Dict) -> str:
+    ph, pd, pa = game['home_prob'], game['draw_prob'], game['away_prob']
+    outcome = "Home Win" if ph > pa and ph > pd else ("Away Win" if pa > ph and pa > pd else "Draw")
+    confidence = make_star_confidence(max(ph, pd, pa))
+    ou_total = game.get("over_under", {}).get("Over 2.5", 0)
+    narrative = f"Prediction: {outcome} ({max(ph, pd, pa):.0%} probability, {confidence})\n"
+    narrative += f"Expected total goals: {ou_total:.0%} chance of over 2.5 goals.\n"
+    if game.get('news_sentiment', 0) > 0:
+        narrative += "Recent news indicates positive sentiment for teams.\n"
+    return narrative
+
+
 def generate_card(game: Dict):
     dt_str = safe_parse_datetime_utc_to_capetown(game['utc']).strftime("%Y-%m-%d %H:%M")
     home_prob = game["home_prob"]
@@ -326,19 +338,17 @@ def generate_card(game: Dict):
         {color_bar(home_prob, 'home-bar')}
         {color_bar(over25_prob, 'over-bar')}
         {color_bar(away_prob, 'away-bar')}
-        """,
-        unsafe_allow_html=True
-    )
+        """, unsafe_allow_html=True)
 
-    st.markdown(
-        f"""
+    # Narration before corners & yellow cards
+    st.markdown(f"<div class='narrative'>{generate_narrative(game)}</div>", unsafe_allow_html=True)
+
+    st.markdown(f"""
         <div>
             <span class='stats-box corners-box'>Corners: {corners['home']} - {corners['away']}</span>
             <span class='stats-box yellow-box'>Yellow Cards: {yellows['home']} - {yellows['away']}</span>
         </div>
-        """,
-        unsafe_allow_html=True
-    )
+        """, unsafe_allow_html=True)
 
     if st.button(f"Add to Betslip", key=f"add_{game['fixture_id']}"):
         if "betslip" not in st.session_state:
@@ -363,7 +373,6 @@ else:
 if not fixtures:
     st.info("No fixtures available for the selected league and date.")
 else:
-    # Layout fixtures in rows of two responsive columns
     for i in range(0, len(fixtures), 2):
         row = fixtures[i:i+2]
         cols = st.columns(len(row))
@@ -371,7 +380,6 @@ else:
             with col:
                 generate_card(game)
 
-# Betslip display
 if "betslip" in st.session_state and st.session_state["betslip"]:
     st.markdown("---")
     st.header("Your Betslip")
