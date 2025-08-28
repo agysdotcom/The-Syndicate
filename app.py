@@ -1,6 +1,7 @@
 import os
 import math
 from datetime import datetime, timezone
+from itertools import combinations
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 import requests
@@ -36,6 +37,7 @@ LEAGUES = {
 HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
 CAPE_TOWN_TZ = pytz.timezone("Africa/Johannesburg")
 
+# ---------------- Utility functions ----------------
 def safe_parse_datetime_utc_to_capetown(date_utc: str) -> datetime:
     try:
         dt_utc = datetime.fromisoformat(date_utc.replace("Z", "")).replace(tzinfo=timezone.utc)
@@ -77,6 +79,7 @@ def make_star_confidence(value: float) -> str:
     stars = int(np.clip(1 + round(4 * value), 1, 5))
     return "⭐" * stars
 
+# ---------------- Data fetching ----------------
 @st.cache_data(ttl=900)
 def fetch_fixtures(league_id: int, date_iso: str) -> List[Dict]:
     try:
@@ -105,7 +108,7 @@ def fetch_fixtures(league_id: int, date_iso: str) -> List[Dict]:
 
 @st.cache_data(ttl=600)
 def fetch_match_stats(fixture_id: int) -> Dict:
-    # Placeholder stats; replace with real API call if available
+    # Placeholder stats
     return {"corners": {"home": 3, "away":4}, "yellow_cards": {"home": 1, "away": 2}}
 
 @st.cache_data(ttl=1800)
@@ -149,6 +152,7 @@ def fetch_news_snippets(team: str) -> List[str]:
     except Exception:
         return []
 
+# ---------------- Prediction models ----------------
 def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: Optional[float], news_score: float=0) -> Tuple[float, float, float]:
     probs = _odds_to_implied([h_odds, d_odds, a_odds])
     probs = _proportional_devig(probs)
@@ -192,6 +196,7 @@ def prepare_fixtures_with_stats(league_id: int, date_iso: str) -> List[Dict]:
         })
     return enriched
 
+# ---------------- Narrative ----------------
 def generate_narrative(game: Dict) -> str:
     ph, pd, pa = game['home_prob'], game['draw_prob'], game['away_prob']
     outcome = "Home Win" if ph > pa and ph > pd else ("Away Win" if pa > ph and pa > pd else "Draw")
@@ -206,35 +211,50 @@ def generate_narrative(game: Dict) -> str:
     narrative += f"Expected Corners: {c['home']} - {c['away']}, Yellow Cards: {y['home']} - {y['away']}\n"
     return narrative
 
-def generate_betslips(fixtures: List[Dict]) -> Dict[str, List[Dict]]:
-    conf_thresh = 0.6
-    winners, goals, yellow, corners = [], [], [], []
+# ---------------- Candidate pool for Auto Betslips ----------------
+def build_candidate_pool(fixtures: List[Dict]) -> List[Dict]:
+    pool = []
     for f in fixtures:
-        max_win = max(f["home_prob"], f["draw_prob"], f["away_prob"])
-        pick = None
-        if f["home_prob"] == max_win:
-            pick = f"Home Win ({f['home']})"
-        elif f["away_prob"] == max_win:
-            pick = f"Away Win ({f['away']})"
-        if max_win > conf_thresh and pick:
-            winners.append({"match": f"{f['home']} vs {f['away']}", "pick": pick, "prob": max_win, "confidence": f["confidence"], "game": f})
-        for k, v in f["over_under"].items():
-            if k.lower().startswith("over") and v > conf_thresh:
-                goals.append({"match": f"{f['home']} vs {f['away']}", "pick": k, "prob": v, "confidence": f["confidence"], "game": f})
-        if sum(f.get("yellow_cards", {"home":0,"away":0}).values()) >= 3:
-            yellow.append({"match": f"{f['home']} vs {f['away']}", "pick": "High Yellow Cards", "prob": None, "confidence": "N/A", "game": f})
+        # 1X2
+        pool.append({"match": f"{f['home']} vs {f['away']}", "pick": f"Home Win ({f['home']})", "prob": f['home_prob'], "game": f})
+        pool.append({"match": f"{f['home']} vs {f['away']}", "pick": f"Draw", "prob": f['draw_prob'], "game": f})
+        pool.append({"match": f"{f['home']} vs {f['away']}", "pick": f"Away Win ({f['away']})", "prob": f['away_prob'], "game": f})
+        # Over 2.5 Goals
+        if f['over_under'].get("Over 2.5"):
+            pool.append({"match": f"{f['home']} vs {f['away']}", "pick": "Over 2.5 Goals", "prob": f['over_under']["Over 2.5"], "game": f})
+        # Placeholder corners & yellow cards
         if sum(f.get("corners", {"home":0,"away":0}).values()) >= 6:
-            corners.append({"match": f"{f['home']} vs {f['away']}", "pick": "High Corners", "prob": None, "confidence": "N/A", "game": f})
-    return {
-        "Winner Betslip": winners,
-        "Over Goals Betslip": goals,
-        "Yellow Cards Betslip": yellow,
-        "Corners Betslip": corners,
-    }
+            pool.append({"match": f"{f['home']} vs {f['away']}", "pick": "High Corners", "prob": 0.5, "game": f})
+        if sum(f.get("yellow_cards", {"home":0,"away":0}).values()) >= 3:
+            pool.append({"match": f"{f['home']} vs {f['away']}", "pick": "High Yellow Cards", "prob": 0.5, "game": f})
+    return pool
 
+# ---------------- Auto betslip generator ----------------
+def auto_generate_betslips(fixtures: List[Dict], target_prob=0.7, min_leg_prob=0.4) -> List[Dict]:
+    pool = build_candidate_pool(fixtures)
+    candidate_slips = []
+
+    # Try combinations from 1 to 4 legs
+    for r in range(1, 5):
+        for combo in combinations(pool, r):
+            probs = [c['prob'] for c in combo]
+            if any(p < min_leg_prob for p in probs):
+                continue
+            combined_prob = np.prod(probs)
+            if combined_prob >= target_prob:
+                ev_proxy = np.mean(probs) * r
+                candidate_slips.append({"legs": combo, "combined_prob": combined_prob, "ev_proxy": ev_proxy})
+        if len(candidate_slips) >= 2:
+            break
+    # Sort by combined_prob
+    candidate_slips.sort(key=lambda x: (-x['combined_prob'], -x['ev_proxy']))
+    return candidate_slips[:2] if candidate_slips else []
+
+# ---------------- UI ----------------
 league_selected = st.sidebar.selectbox("Select League", list(LEAGUES.keys()), 0)
 date_today = datetime.utcnow().strftime("%Y-%m-%d")
 
+# Load fixtures
 if league_selected == "All":
     fixtures = []
     for lid in LEAGUES.values():
@@ -243,28 +263,40 @@ if league_selected == "All":
 else:
     fixtures = prepare_fixtures_with_stats(LEAGUES[league_selected], date_today)
 
+# Tabs for fixtures per league + auto betslips
 league_names = sorted(set(f["leagueName"] for f in fixtures))
-if league_names:
-    league_tabs = st.tabs(league_names)
-    for idx, lname in enumerate(league_names):
-        with league_tabs[idx]:
-            league_fixtures = [f for f in fixtures if f["leagueName"] == lname]
-            if not league_fixtures:
-                st.info(f"No matches available for {lname}")
-            for game in league_fixtures:
-                st.subheader(f"{game['home']} vs {game['away']} - {safe_parse_datetime_utc_to_capetown(game['utc']).strftime('%Y-%m-%d %H:%M')}")
-                st.markdown(f"**Recommendation:** {game['best_bet']}")
-                st.markdown(f"**AI Prediction Confidence:** {game['confidence']}")
-                st.text(generate_narrative(game))
-else:
-    st.info("No fixtures to display for selected league and date.")
+tabs = st.tabs(league_names + ["Auto Betslips"])
 
-st.markdown("---")
-st.header("Betslips for Selected League/All")
-betslips = generate_betslips(fixtures)
-for name, picks in betslips.items():
-    st.subheader(name)
-    if not picks:
-        st.info("No picks available.")
-    for p in picks:
-        st.markdown(f"**{p['match']}** | Bet: {p['pick']} | Probability: {p['prob'] if p['prob'] is not None else 'N/A'} | Confidence: {p['confidence']}")
+# ---------------- Fixture display ----------------
+for idx, lname in enumerate(league_names):
+    with tabs[idx]:
+        league_fixtures = [f for f in fixtures if f["leagueName"] == lname]
+        if not league_fixtures:
+            st.info(f"No matches available for {lname}")
+        for game in league_fixtures:
+            st.markdown(f"""<div style='border:1px solid #666; border-radius:10px; padding:10px; margin-bottom:10px; background:#1a1a1a; color:white;'>
+            <h4>{game['home']} vs {game['away']} - {safe_parse_datetime_utc_to_capetown(game['utc']).strftime('%Y-%m-%d %H:%M')}</h4>
+            <p><b>Recommendation:</b> {game['best_bet']} | <b>AI Confidence:</b> {game['confidence']}</p>
+            <pre>{generate_narrative(game)}</pre>
+            </div>""", unsafe_allow_html=True)
+
+# ---------------- Auto Betslips display ----------------
+with tabs[-1]:
+    st.header("Auto-generated Betslips")
+    for lname in league_names:
+        league_fixtures = [f for f in fixtures if f["leagueName"] == lname]
+        if not league_fixtures:
+            st.info(f"No matches for {lname}")
+            continue
+        st.subheader(lname)
+        slips = auto_generate_betslips(league_fixtures)
+        if not slips:
+            st.warning("No high-probability betslips found; relaxing threshold...")
+            slips = auto_generate_betslips(league_fixtures, target_prob=0.7, min_leg_prob=0.4)
+        for slip in slips:
+            st.markdown(f"""<div style='border:2px solid #FFD700; border-radius:10px; padding:10px; margin-bottom:15px; background:#222; color:white;'>
+            <h4>Combined Success Probability: {slip['combined_prob']:.0%}</h4>""", unsafe_allow_html=True)
+            for leg in slip['legs']:
+                st.markdown(f"""<div style='border:1px solid #666; border-radius:5px; padding:5px; margin-bottom:5px; background:#333;'>
+                <b>{leg['match']}</b> | Bet: {leg['pick']} | Prob: {leg['prob']:.0% if leg['prob'] else 'N/A'}</div>""", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
