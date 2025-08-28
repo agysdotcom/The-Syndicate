@@ -30,13 +30,12 @@ LEAGUES = {
     "All": 0, "Premier League": 39, "La Liga": 140, "Serie A": 135,
     "Bundesliga": 78, "Ligue 1": 61, "Eredivisie": 88, "Primeira Liga": 94,
     "Scottish Premiership": 179, "Belgian Pro League": 144,
-    "Champions League": 2, "Europa League": 3, "Conference League": 848
+    "Champions League": 2, "Europa League": 3, "Conference League": 848,
 }
 
 HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
-CAPE_TOWN_TZ = pytz.timezone("Africa/Johannesburg")  # GMT+2
+CAPE_TOWN_TZ = pytz.timezone("Africa/Johannesburg")
 
-# Helper Functions
 def safe_parse_datetime_utc_to_capetown(date_utc: str) -> datetime:
     try:
         dt_utc = datetime.fromisoformat(date_utc.replace("Z", "")).replace(tzinfo=timezone.utc)
@@ -110,6 +109,7 @@ def fetch_fixtures(league_id: int, date_iso: str) -> List[Dict]:
 
 @st.cache_data(ttl=600)
 def fetch_match_stats(fixture_id: int) -> Dict:
+    # Placeholder
     return {"corners": {"home": 3, "away": 4}, "yellow_cards": {"home": 1, "away": 2}}
 
 @st.cache_data(ttl=1800)
@@ -159,14 +159,14 @@ def fetch_news_snippets(team: str) -> List[str]:
     except Exception:
         return []
 
-def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: Optional[float], news_score: float = 0) -> Tuple[float, float, float]:
+def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: Optional[float], news_score: float=0) -> Tuple[float, float, float]:
     probs = _odds_to_implied([h_odds, d_odds, a_odds])
     probs = _proportional_devig(probs)
     probs = [min(max(p + 0.05 * news_score, 0), 1) for p in probs]
     s = sum(probs)
     if s == 0:
-        return 1 / 3, 1 / 3, 1 / 3
-    return tuple(p / s for p in probs)
+        return 1/3, 1/3, 1/3
+    return tuple(p/s for p in probs)
 
 def over_under_probs(xg_home: float, xg_away: float) -> Dict[str, float]:
     total = xg_home + xg_away
@@ -185,7 +185,7 @@ def prepare_fixtures_with_stats(league_id: int, date_iso: str) -> List[Dict]:
         news = fetch_news_snippets(f["home"]) + fetch_news_snippets(f["away"])
         news_s = sentiment_score(news)
         ph, pd, pa = predict_win_odds(h_od, d_od, a_od, news_s)
-        xg_home, xg_away = 1.3 + ph * 1.5, 1.1 + pa * 1.5
+        xg_home, xg_away = 1.3 + ph*1.5, 1.1 + pa*1.5
         ou = over_under_probs(xg_home, xg_away)
         stats = fetch_match_stats(f["fixture_id"])
         best_bet = "🏆 Strong Pick" if max(ph, pa) > 0.6 else ""
@@ -197,12 +197,26 @@ def prepare_fixtures_with_stats(league_id: int, date_iso: str) -> List[Dict]:
             "away_prob": pa,
             "news_sentiment": news_s,
             "over_under": ou,
-            "corners": stats.get("corners", {"home": 0, "away": 0}),
-            "yellow_cards": stats.get("yellow_cards", {"home": 0, "away": 0}),
+            "corners": stats.get("corners", {"home":0,"away":0}),
+            "yellow_cards": stats.get("yellow_cards", {"home":0,"away":0}),
             "best_bet": best_bet,
             "confidence": confidence
         })
     return enriched
+
+def generate_narrative(game: Dict) -> str:
+    ph, pd, pa = game['home_prob'], game['draw_prob'], game['away_prob']
+    outcome = "Home Win" if ph > pa and ph > pd else ("Away Win" if pa > ph and pa > pd else "Draw")
+    confidence = make_star_confidence(max(ph, pd, pa))
+    ou_total = game.get("over_under", {}).get("Over 2.5", 0)
+    narrative = f"Prediction: {outcome} ({max(ph, pd, pa):.0%} probability, {confidence})\n"
+    narrative += f"Expected total goals: {ou_total:.0%} chance of over 2.5 goals.\n"
+    if game.get('news_sentiment', 0) > 0:
+        narrative += "Recent news indicates positive sentiment for teams.\n"
+    c = game.get("corners", {"home":0, "away":0})
+    y = game.get("yellow_cards", {"home":0, "away":0})
+    narrative += f"Expected Corners: {c['home']} - {c['away']}, Yellow Cards: {y['home']} - {y['away']}\n"
+    return narrative
 
 league_selected = st.sidebar.selectbox("Select League", list(LEAGUES.keys()), 0)
 date_today = datetime.utcnow().strftime("%Y-%m-%d")
