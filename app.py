@@ -15,7 +15,6 @@ try:
     nltk.data.find("sentiment/vader_lexicon.zip")
 except LookupError:
     nltk.download("vader_lexicon")
-
 sia = SentimentIntensityAnalyzer()
 
 st.set_page_config(page_title="THE SYNDICATE - AI Soccer Predictor", layout="wide")
@@ -109,13 +108,33 @@ def fetch_fixtures(league_id: int, date_iso: str) -> List[Dict]:
 
 @st.cache_data(ttl=600)
 def fetch_match_stats(fixture_id: int) -> Dict:
-    # Placeholder for API stats (replace with real API if available)
-    return {"corners": {"home": 3, "away": 4}, "yellow_cards": {"home": 1, "away": 2}}
+    try:
+        r = requests.get(f"{BASE_FOOTBALL}/fixtures/statistics?fixture={fixture_id}",
+                         headers=HEADERS_FOOTBALL, timeout=15)
+        data = r.json()
+        stats = {"corners": {"home": 0, "away": 0}, "yellow_cards": {"home": 0, "away": 0}}
+        for team_stats in data.get("response", []):
+            tid = team_stats['team']['id']
+            for stat in team_stats['statistics']:
+                if stat['type'] == 'Corner':
+                    if tid == 0:
+                        stats['corners']['home'] = stat['value']
+                    else:
+                        stats['corners']['away'] = stat['value']
+                elif stat['type'] == 'Yellow Card':
+                    if tid == 0:
+                        stats['yellow_cards']['home'] = stat['value']
+                    else:
+                        stats['yellow_cards']['away'] = stat['value']
+        return stats
+    except Exception:
+        return {"corners": {"home": 0, "away": 0}, "yellow_cards": {"home": 0, "away": 0}}
 
 @st.cache_data(ttl=1800)
 def fetch_odds(home: str, away: str, date_iso: str) -> Dict:
     try:
-        params = {"apiKey": THEODDSAPI_KEY, "regions": "uk,eu,us", "markets": "h2h,totals", "oddsFormat": "decimal", "dateFormat": "iso"}
+        params = {"apiKey": THEODDSAPI_KEY, "regions": "uk,eu,us",
+                  "markets": "h2h,totals", "oddsFormat": "decimal", "dateFormat": "iso"}
         r = requests.get(f"{BASE_ODDS}/sports/soccer/odds", params=params, timeout=20)
         data = r.json() if r.ok else []
         target = date_iso[:10]
@@ -146,7 +165,8 @@ def extract_match_odds(odds_obj: Dict) -> Tuple[Optional[float], Optional[float]
 @st.cache_data(ttl=900)
 def fetch_news_snippets(team: str) -> List[str]:
     try:
-        params = {"q": f"{team} injury press conference latest", "apiKey": NEWSAPI_KEY, "language": "en", "pageSize": 5, "sortBy": "publishedAt"}
+        params = {"q": f"{team} injury press conference latest", "apiKey": NEWSAPI_KEY,
+                  "language": "en", "pageSize": 5, "sortBy": "publishedAt"}
         r = requests.get("https://newsapi.org/v2/everything", params=params, timeout=15)
         data = r.json() if r.ok else {}
         return [a.get("title", "") for a in data.get("articles", []) if a.get("title")]
@@ -197,28 +217,39 @@ def prepare_fixtures_with_stats(league_id:int,date_iso:str)->List[Dict]:
         })
     return enriched
 
-# ------------------- UI Card -------------------
-def generate_fixture_card(game:Dict):
-    c,y = game['corners'],game['yellow_cards']
-    cols = st.columns([2,2,1,1])
+# ------------------- UI Card with color-coded bars -------------------
+def generate_fixture_card(game: Dict):
+    c, y = game['corners'], game['yellow_cards']
+    cols = st.columns([2,3,1,1])
+    
     with cols[0]:
         st.markdown(f"**{game['home']} vs {game['away']}**")
         st.markdown(f"{safe_parse_datetime_utc_to_capetown(game['utc']).strftime('%Y-%m-%d %H:%M')}")
+    
     with cols[1]:
-        st.markdown(f"**Prediction:** Home {game['home_prob']:.0%}, Draw {game['draw_prob']:.0%}, Away {game['away_prob']:.0%}")
-        st.markdown(f"**Expected Goals:** {game['over_under'].get('Over 2.5',0):.0%} chance Over 2.5")
+        st.markdown("**Win Probabilities:**")
+        for team, prob in [("Home", game['home_prob']), ("Draw", game['draw_prob']), ("Away", game['away_prob'])]:
+            color = "green" if prob > 0.6 else "orange" if prob > 0.4 else "red"
+            st.markdown(f"<div style='background-color:#ddd;border-radius:5px;width:100%;height:18px;'>"
+                        f"<div style='width:{prob*100}%;background-color:{color};height:100%;border-radius:5px;text-align:right;padding-right:3px;color:white;'>"
+                        f"{prob:.0%}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"**Expected Goals Over 2.5:** {game['over_under'].get('Over 2.5',0):.0%}")
         st.markdown(f"**Confidence:** {game['confidence']} {game['best_bet']}")
+    
     with cols[2]:
         st.markdown(f"**Corners:** {c['home']} - {c['away']}")
+        st.progress(min(sum(c.values())/10, 1.0))
+    
     with cols[3]:
         st.markdown(f"**Yellow Cards:** {y['home']} - {y['away']}")
+        st.progress(min(sum(y.values())/10, 1.0))
+    
     st.button("Add to Betslip", key=f"{game['fixture_id']}_add")
     st.markdown("---")
 
 # ------------------- Auto Betslip Engine -------------------
 def build_auto_betslips(fixtures:List[Dict], min_total_prob=0.7, max_legs=4) -> List[Dict]:
     bets=[]
-    # Build candidate pool
     pool=[]
     for f in fixtures:
         if f["home_prob"]>0.4:
@@ -231,13 +262,13 @@ def build_auto_betslips(fixtures:List[Dict], min_total_prob=0.7, max_legs=4) -> 
             pool.append({"match":f"{f['home']} vs {f['away']}","pick":"High Corners","prob":0.5})
         if sum(f["yellow_cards"].values())>=3:
             pool.append({"match":f"{f['home']} vs {f['away']}","pick":"High Yellow Cards","prob":0.5})
-    # Generate combinations
+
     for n in range(1,max_legs+1):
         for combo in combinations(pool,n):
             total_prob=np.prod([c["prob"] for c in combo])
             if total_prob>=min_total_prob:
                 bets.append({"legs":combo,"total_prob":total_prob})
-    # Ensure at least 2 bets
+
     if len(bets)<2:
         for n in range(1,max_legs+1):
             for combo in combinations(pool,n):
@@ -248,13 +279,12 @@ def build_auto_betslips(fixtures:List[Dict], min_total_prob=0.7, max_legs=4) -> 
             if len(bets)>=2:
                 break
     bets=sorted(bets,key=lambda x:-x["total_prob"])
-    return bets[:5]  # top 5 bets
+    return bets[:5]
 
 # ------------------- App Layout -------------------
 league_selected = st.sidebar.selectbox("Select League", list(LEAGUES.keys()),0)
 date_today = datetime.utcnow().strftime("%Y-%m-%d")
 
-# Prepare fixtures
 fixtures=[]
 if league_selected=="All":
     for lid in LEAGUES.values():
@@ -263,7 +293,6 @@ if league_selected=="All":
 else:
     fixtures=prepare_fixtures_with_stats(LEAGUES[league_selected],date_today)
 
-# Tabs
 tab1,tab2 = st.tabs(["Fixtures","Auto Betslips"])
 
 with tab1:
@@ -288,5 +317,7 @@ with tab2:
         for b in bets:
             st.markdown(f"**Combined Prob:** {b['total_prob']:.2f}")
             for leg in b["legs"]:
-                st.markdown(f"- {leg['match']} | Bet: {leg['pick']} | Prob: {leg['prob']:.2f}")
+                color = "green" if leg['prob'] > 0.6 else "orange" if leg['prob'] > 0.4 else "red"
+                st.markdown(f"- {leg['match']} | Bet: {leg['pick']} | "
+                            f"<span style='color:{color}; font-weight:bold'>{leg['prob']:.0%}</span>", unsafe_allow_html=True)
             st.button("Add to Betslip", key=f"auto_{lname}_{bets.index(b)}")
