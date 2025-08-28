@@ -22,7 +22,7 @@ st.set_page_config(page_title="THE SYNDICATE - AI Soccer Predictor", layout="wid
 
 # ------------------- API Keys -------------------
 API_FOOTBALL_KEY = "a6917f6db6a731e8b6cfa9f9f365a5ed"
-THEODDSAPI_KEY = "69bb2856e8ec4ad7b9a12f305147b408"
+THEODDSAPI_KEY = "69bb2856e8ec4ad7b9a12f305147408"
 NEWSAPI_KEY = "c7d0efc525bf48199ab229f8f70fbc01"
 
 BASE_FOOTBALL = "https://v3.football.api-sports.io"
@@ -109,8 +109,7 @@ def fetch_fixtures(league_id: int, date_iso: str) -> List[Dict]:
 
 @st.cache_data(ttl=600)
 def fetch_match_stats(fixture_id: int) -> Dict:
-    # Use your API to fetch real match stats if available
-    # Example placeholders
+    # Placeholder for API stats (replace with real API if available)
     return {"corners": {"home": 3, "away": 4}, "yellow_cards": {"home": 1, "away": 2}}
 
 @st.cache_data(ttl=1800)
@@ -198,15 +197,23 @@ def prepare_fixtures_with_stats(league_id:int,date_iso:str)->List[Dict]:
         })
     return enriched
 
+# ------------------- UI Card -------------------
 def generate_fixture_card(game:Dict):
-    st.markdown(f"### {game['home']} vs {game['away']} ({safe_parse_datetime_utc_to_capetown(game['utc']).strftime('%Y-%m-%d %H:%M')})")
-    st.markdown(f"**Recommendation:** {game['best_bet']}")
-    st.markdown(f"**Confidence:** {game['confidence']}")
-    st.text(f"Win probs: H:{game['home_prob']:.2f}, D:{game['draw_prob']:.2f}, A:{game['away_prob']:.2f}")
-    st.text(f"Over/Under 2.5: {game['over_under'].get('Over 2.5',0):.2f}")
     c,y = game['corners'],game['yellow_cards']
-    st.text(f"Corners: {c['home']} - {c['away']}, Yellow Cards: {y['home']} - {y['away']}")
+    cols = st.columns([2,2,1,1])
+    with cols[0]:
+        st.markdown(f"**{game['home']} vs {game['away']}**")
+        st.markdown(f"{safe_parse_datetime_utc_to_capetown(game['utc']).strftime('%Y-%m-%d %H:%M')}")
+    with cols[1]:
+        st.markdown(f"**Prediction:** Home {game['home_prob']:.0%}, Draw {game['draw_prob']:.0%}, Away {game['away_prob']:.0%}")
+        st.markdown(f"**Expected Goals:** {game['over_under'].get('Over 2.5',0):.0%} chance Over 2.5")
+        st.markdown(f"**Confidence:** {game['confidence']} {game['best_bet']}")
+    with cols[2]:
+        st.markdown(f"**Corners:** {c['home']} - {c['away']}")
+    with cols[3]:
+        st.markdown(f"**Yellow Cards:** {y['home']} - {y['away']}")
     st.button("Add to Betslip", key=f"{game['fixture_id']}_add")
+    st.markdown("---")
 
 # ------------------- Auto Betslip Engine -------------------
 def build_auto_betslips(fixtures:List[Dict], min_total_prob=0.7, max_legs=4) -> List[Dict]:
@@ -265,21 +272,3 @@ with tab1:
         league_tabs = st.tabs(league_names)
         for idx,lname in enumerate(league_names):
             with league_tabs[idx]:
-                league_fixtures=[f for f in fixtures if f["leagueName"]==lname]
-                if not league_fixtures:
-                    st.info(f"No matches available for {lname}")
-                for game in league_fixtures:
-                    generate_fixture_card(game)
-    else:
-        st.info("No fixtures to display.")
-
-with tab2:
-    for lname in sorted(set(f["leagueName"] for f in fixtures)):
-        st.subheader(f"Auto Betslips - {lname}")
-        league_fixtures=[f for f in fixtures if f["leagueName"]==lname]
-        bets=build_auto_betslips(league_fixtures)
-        for b in bets:
-            st.markdown(f"**Combined Prob:** {b['total_prob']:.2f}")
-            for leg in b["legs"]:
-                st.markdown(f"- {leg['match']} | Bet: {leg['pick']} | Prob: {leg['prob']:.2f}")
-            st.button("Add to Betslip", key=f"auto_{lname}_{bets.index(b)}")
