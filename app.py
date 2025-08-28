@@ -5,13 +5,11 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 import requests
 import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
-import pytz
 import nltk
+import pytz
 from nltk.sentiment import SentimentIntensityAnalyzer
 
-# Setup for NLTK's Vader Sentiment
+# NLP setup
 try:
     nltk.data.find("sentiment/vader_lexicon.zip")
 except LookupError:
@@ -19,37 +17,24 @@ except LookupError:
 
 sia = SentimentIntensityAnalyzer()
 
-# Streamlit page config
 st.set_page_config(page_title="THE SYNDICATE - AI Soccer Predictor", layout="wide")
 
-# API Keys setup (use environment variables in production)
-API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "a6917f6db6a731e8b6cfa9f9f365a5ed")
-THEODDSAPI_KEY = os.getenv("THEODDSAPI_KEY", "69bb2856e8ec4ad7b9a12f305147408")
-NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "c7d0efc525bf48199ab229f8f70fbc01")
+API_FOOTBALL_KEY = "a6917f6db6a731e8b6cfa9f9f365a5ed"
+THEODDSAPI_KEY = "69bb2856e8ec4ad7b9a12f305147b408"
+NEWSAPI_KEY = "c7d0efc525bf48199ab229f8f70fbc01"
 
 BASE_FOOTBALL = "https://v3.football.api-sports.io"
 BASE_ODDS = "https://api.the-odds-api.com/v4"
 
-HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
-CAPE_TOWN_TZ = pytz.timezone("Africa/Johannesburg")  # Timezone GMT+2, same as Cape Town
-
 LEAGUES = {
-    "All": 0,
-    "Premier League": 39,
-    "La Liga": 140,
-    "Serie A": 135,
-    "Bundesliga": 78,
-    "Ligue 1": 61,
-    "Eredivisie": 88,
-    "Primeira Liga": 94,
-    "Scottish Premiership": 179,
-    "Belgian Pro League": 144,
-    "Champions League": 2,
-    "Europa League": 3,
-    "Conference League": 848,
+    "All": 0, "Premier League": 39, "La Liga": 140, "Serie A": 135,
+    "Bundesliga": 78, "Ligue 1": 61, "Eredivisie": 88, "Primeira Liga": 94,
+    "Scottish Premiership": 179, "Belgian Pro League": 144,
+    "Champions League": 2, "Europa League": 3, "Conference League": 848
 }
 
-# Helper functions
+HEADERS_FOOTBALL = {"x-apisports-key": API_FOOTBALL_KEY}
+CAPE_TOWN_TZ = pytz.timezone("Africa/Johannesburg")
 
 def safe_parse_datetime_utc_to_capetown(date_utc: str) -> datetime:
     try:
@@ -61,13 +46,7 @@ def safe_parse_datetime_utc_to_capetown(date_utc: str) -> datetime:
 def sentiment_score(text_list: List[str]) -> float:
     if not text_list:
         return 0.0
-    scores = []
-    for t in text_list:
-        try:
-            scores.append(sia.polarity_scores(t)['compound'])
-        except Exception:
-            scores.append(0.0)
-    return float(np.mean(scores))
+    return np.mean([sia.polarity_scores(t)['compound'] for t in text_list])
 
 def _odds_to_implied(odds: List[Optional[float]]) -> List[float]:
     probs = []
@@ -84,19 +63,15 @@ def _odds_to_implied(odds: List[Optional[float]]) -> List[float]:
 
 def _proportional_devig(probs: List[float]) -> List[float]:
     s = sum(probs)
-    if s > 0:
-        return [p / s for p in probs]
-    if len(probs) == 0:
-        return [1/3, 1/3, 1/3]
-    return [1 / len(probs)] * len(probs)
+    return [p / s for p in probs] if s > 0 else [1 / len(probs)] * len(probs)
 
 def poisson_pmf(k, lam):
-    return np.exp(-lam) * (lam**k) / math.factorial(k)
+    return np.exp(-lam) * (lam ** k) / math.factorial(k)
 
 def poisson_cdf_over(total: float, lam_total: float) -> float:
     floor_needed = int(math.floor(total + 0.5))
-    c = sum(poisson_pmf(k, lam_total) for k in range(floor_needed+1))
-    return max(0.0, 1.0 - c)
+    c = sum(poisson_pmf(k, lam_total) for k in range(floor_needed))
+    return 1 - c
 
 def make_star_confidence(value: float) -> str:
     stars = int(np.clip(1 + round(4 * value), 1, 5))
@@ -130,19 +105,13 @@ def fetch_fixtures(league_id: int, date_iso: str) -> List[Dict]:
 
 @st.cache_data(ttl=600)
 def fetch_match_stats(fixture_id: int) -> Dict:
-    # Placeholder; replace with real API call
-    return {"corners": {"home": 3, "away": 4}, "yellow_cards": {"home": 1, "away": 2}}
+    # Placeholder stats; replace with real API call if available
+    return {"corners": {"home": 3, "away":4}, "yellow_cards": {"home": 1, "away": 2}}
 
 @st.cache_data(ttl=1800)
 def fetch_odds(home: str, away: str, date_iso: str) -> Dict:
     try:
-        params = {
-            "apiKey": THEODDSAPI_KEY,
-            "regions": "uk,eu,us",
-            "markets": "h2h,totals",
-            "oddsFormat": "decimal",
-            "dateFormat": "iso"
-        }
+        params = {"apiKey": THEODDSAPI_KEY, "regions": "uk,eu,us", "markets": "h2h,totals", "oddsFormat": "decimal", "dateFormat": "iso"}
         r = requests.get(f"{BASE_ODDS}/sports/soccer/odds", params=params, timeout=20)
         data = r.json() if r.ok else []
         target = date_iso[:10]
@@ -163,17 +132,9 @@ def extract_match_odds(odds_obj: Dict) -> Tuple[Optional[float], Optional[float]
         sites = odds_obj.get("bookmakers", [])
         if not sites:
             return None, None, None
-        market_list = sites[0].get("markets", [])
-        # Choose h2h market if exist
-        for m in market_list:
-            if m.get("key") == "h2h":
-                outcomes = m.get("outcomes", [])
-                d = {p['name'].lower(): p.get('price') for p in outcomes if 'name' in p}
-                return d.get("home"), d.get("draw"), d.get("away")
-        # fallback
-        m = market_list[0] if market_list else {"outcomes": []}
-        prices = m.get("outcomes", [])
-        d = {p['name'].lower(): p.get('price') for p in prices if 'name' in p}
+        market = sites[0].get("markets", [])
+        prices = market.get("outcomes", [])
+        d = {p['name'].lower(): p['price'] for p in prices if 'name' in p and 'price' in p}
         return d.get("home"), d.get("draw"), d.get("away")
     except Exception:
         return None, None, None
@@ -181,32 +142,26 @@ def extract_match_odds(odds_obj: Dict) -> Tuple[Optional[float], Optional[float]
 @st.cache_data(ttl=900)
 def fetch_news_snippets(team: str) -> List[str]:
     try:
-        params = {
-            "q": f"{team} injury press conference latest",
-            "apiKey": NEWSAPI_KEY,
-            "language": "en",
-            "pageSize": 5,
-            "sortBy": "publishedAt"
-        }
+        params = {"q": f"{team} injury press conference latest", "apiKey": NEWSAPI_KEY, "language": "en", "pageSize": 5, "sortBy": "publishedAt"}
         r = requests.get("https://newsapi.org/v2/everything", params=params, timeout=15)
         data = r.json() if r.ok else {}
         return [a.get("title", "") for a in data.get("articles", []) if a.get("title")]
     except Exception:
         return []
 
-def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: Optional[float], news_score: float = 0) -> Tuple[float, float, float]:
+def predict_win_odds(h_odds: Optional[float], d_odds: Optional[float], a_odds: Optional[float], news_score: float=0) -> Tuple[float, float, float]:
     probs = _odds_to_implied([h_odds, d_odds, a_odds])
     probs = _proportional_devig(probs)
     probs = [min(max(p + 0.05 * news_score, 0), 1) for p in probs]
     s = sum(probs)
     if s == 0:
-        return 1 / 3, 1 / 3, 1 / 3
-    return tuple(p / s for p in probs)
+        return 1/3, 1/3, 1/3
+    return tuple(p/s for p in probs)
 
 def over_under_probs(xg_home: float, xg_away: float) -> Dict[str, float]:
     total = xg_home + xg_away
     res = {}
-    for l in [0.5, 1.5, 2.5, 3.5, 4.5]:
+    for l in [0.5,1.5,2.5,3.5,4.5]:
         res[f"Over {l}"] = poisson_cdf_over(l, total)
         res[f"Under {l}"] = 1 - res[f"Over {l}"]
     return res
@@ -220,24 +175,20 @@ def prepare_fixtures_with_stats(league_id: int, date_iso: str) -> List[Dict]:
         news = fetch_news_snippets(f["home"]) + fetch_news_snippets(f["away"])
         news_s = sentiment_score(news)
         ph, pd, pa = predict_win_odds(h_od, d_od, a_od, news_s)
-        xg_home, xg_away = 1.3 + ph * 1.5, 1.1 + pa * 1.5
+        xg_home, xg_away = 1.3 + ph*1.5, 1.1 + pa*1.5
         ou = over_under_probs(xg_home, xg_away)
         stats = fetch_match_stats(f["fixture_id"])
         best_bet = "🏆 Strong Pick" if max(ph, pa) > 0.6 else ""
         confidence = make_star_confidence(max(ph, pa))
         enriched.append({
             **f,
-            "home_prob": ph,
-            "draw_prob": pd,
-            "away_prob": pa,
+            "home_prob": ph, "draw_prob": pd, "away_prob": pa,
             "news_sentiment": news_s,
             "over_under": ou,
-            "corners": stats.get("corners", {"home": 0, "away": 0}),
-            "yellow_cards": stats.get("yellow_cards", {"home": 0, "away": 0}),
+            "corners": stats.get("corners", {"home":0,"away":0}),
+            "yellow_cards": stats.get("yellow_cards", {"home":0,"away":0}),
             "best_bet": best_bet,
             "confidence": confidence,
-            "book_odds": {"home": h_od, "draw": d_od, "away": a_od},
-            "odds_raw_object": o
         })
     return enriched
 
@@ -250,34 +201,29 @@ def generate_narrative(game: Dict) -> str:
     narrative += f"Expected total goals: {ou_total:.0%} chance of over 2.5 goals.\n"
     if game.get('news_sentiment', 0) > 0:
         narrative += "Recent news indicates positive sentiment for teams.\n"
-    c = game.get("corners", {"home": 0, "away": 0})
-    y = game.get("yellow_cards", {"home": 0, "away": 0})
+    c = game.get("corners", {"home":0, "away":0})
+    y = game.get("yellow_cards", {"home":0, "away":0})
     narrative += f"Expected Corners: {c['home']} - {c['away']}, Yellow Cards: {y['home']} - {y['away']}\n"
     return narrative
 
 def generate_betslips(fixtures: List[Dict]) -> Dict[str, List[Dict]]:
-    conf_thresh = 0.60
+    conf_thresh = 0.6
     winners, goals, yellow, corners = [], [], [], []
     for f in fixtures:
         max_win = max(f["home_prob"], f["draw_prob"], f["away_prob"])
         pick = None
-        book_price = None
         if f["home_prob"] == max_win:
             pick = f"Home Win ({f['home']})"
-            book_price = f["book_odds"].get("home")
         elif f["away_prob"] == max_win:
             pick = f"Away Win ({f['away']})"
-            book_price = f["book_odds"].get("away")
-        else:
-            book_price = f["book_odds"].get("draw")
         if max_win > conf_thresh and pick:
-            winners.append({"match": f"{f['home']} vs {f['away']}", "pick": pick, "prob": max_win, "confidence": f["confidence"], "game": f, "book_price": book_price})
+            winners.append({"match": f"{f['home']} vs {f['away']}", "pick": pick, "prob": max_win, "confidence": f["confidence"], "game": f})
         for k, v in f["over_under"].items():
             if k.lower().startswith("over") and v > conf_thresh:
-                goals.append({"match": f"{f['home']} vs {f['away']}", "pick": k, "prob": v, "confidence": f["confidence"], "game": f, "book_price": None})
-        if sum(f.get("yellow_cards", {"home": 0, "away": 0}).values()) >= 3:
+                goals.append({"match": f"{f['home']} vs {f['away']}", "pick": k, "prob": v, "confidence": f["confidence"], "game": f})
+        if sum(f.get("yellow_cards", {"home":0,"away":0}).values()) >= 3:
             yellow.append({"match": f"{f['home']} vs {f['away']}", "pick": "High Yellow Cards", "prob": None, "confidence": "N/A", "game": f})
-        if sum(f.get("corners", {"home": 0, "away": 0}).values()) >= 6:
+        if sum(f.get("corners", {"home":0,"away":0}).values()) >= 6:
             corners.append({"match": f"{f['home']} vs {f['away']}", "pick": "High Corners", "prob": None, "confidence": "N/A", "game": f})
     return {
         "Winner Betslip": winners,
@@ -285,8 +231,6 @@ def generate_betslips(fixtures: List[Dict]) -> Dict[str, List[Dict]]:
         "Yellow Cards Betslip": yellow,
         "Corners Betslip": corners,
     }
-
-# -- Main UI --
 
 league_selected = st.sidebar.selectbox("Select League", list(LEAGUES.keys()), 0)
 date_today = datetime.utcnow().strftime("%Y-%m-%d")
